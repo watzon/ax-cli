@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-latest
           - target: aarch64-apple-darwin
             runner: macos-latest
     steps:
@@ -47,11 +47,11 @@ jobs:
           security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
 
       - name: Sign binary
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          IDENTITY=$(security find-identity -v -p codesigning $RUNNER_TEMP/signing.keychain-db | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Signing with: $IDENTITY"
           codesign --force --options runtime \
-            --sign "Developer ID Application: Chris Watson ($TEAM_ID)" \
+            --sign "$IDENTITY" \
             --timestamp \
             target/${{ matrix.target }}/release/ax
           codesign --verify --verbose target/${{ matrix.target }}/release/ax
@@ -117,11 +117,11 @@ jobs:
           security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
 
       - name: Sign universal binary
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          IDENTITY=$(security find-identity -v -p codesigning $RUNNER_TEMP/signing.keychain-db | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Signing with: $IDENTITY"
           codesign --force --options runtime \
-            --sign "Developer ID Application: Chris Watson ($TEAM_ID)" \
+            --sign "$IDENTITY" \
             --timestamp \
             ax
           codesign --verify --verbose ax
