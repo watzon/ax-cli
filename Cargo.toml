@@ -1,0 +1,26 @@
+[package]
+name = "ax"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "macOS Accessibility Inspector CLI — inspect UI hierarchies, attributes, and actions from the terminal"
+license = "MIT"
+repository = "https://github.com/watzon/macos-ax-cli"
+keywords = ["macos", "accessibility", "cli", "inspector", "a11y"]
+categories = ["command-line-utilities", "os::macos-apis", "accessibility"]
+
+[dependencies]
+accessibility = "0.2"
+accessibility-sys = "0.2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+cocoa = "0.26"
+objc = "0.2"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+colored = "3"
+thiserror = "2"
+
+[lints.clippy]
+all = "warn"
