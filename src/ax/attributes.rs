@@ -114,9 +114,7 @@ pub fn read_attr_display(element: &AXUIElement, name: &str) -> Option<String> {
 fn read_string_attr(element: &AXUIElement, name: &str) -> Option<String> {
     let value = read_attribute(element, name)?;
     let s = cftype_to_string(&value);
-    if s.starts_with('<') {
-        None // Not a string type
-    } else if s.is_empty() {
+    if s.starts_with('<') || s.is_empty() {
         None
     } else {
         Some(s)
