@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ax-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/ax
+
+  universal:
+    name: Universal Binary
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-x86_64-apple-darwin
+          path: x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-aarch64-apple-darwin
+          path: aarch64
+      - name: Create universal binary
+        run: |
+          chmod +x x86_64/ax aarch64/ax
+          lipo -create -output ax x86_64/ax aarch64/ax
+          lipo -info ax
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ax-universal-apple-darwin
+          path: ax
+
+  upload-assets:
+    name: Upload Release Assets
+    needs: universal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-x86_64-apple-darwin
+          path: ax-x86_64-apple-darwin
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-aarch64-apple-darwin
+          path: ax-aarch64-apple-darwin
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-universal-apple-darwin
+          path: ax-universal-apple-darwin
+      - name: Package tarballs
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          chmod +x ax-x86_64-apple-darwin/ax ax-aarch64-apple-darwin/ax ax-universal-apple-darwin/ax
+          tar czf "ax-${VERSION}-x86_64-apple-darwin.tar.gz" -C ax-x86_64-apple-darwin ax
+          tar czf "ax-${VERSION}-aarch64-apple-darwin.tar.gz" -C ax-aarch64-apple-darwin ax
+          tar czf "ax-${VERSION}-universal-apple-darwin.tar.gz" -C ax-universal-apple-darwin ax
+          sha256sum ax-*.tar.gz > checksums-sha256.txt
+          cat checksums-sha256.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ax-*.tar.gz
+            checksums-sha256.txt
