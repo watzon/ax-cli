@@ -21,10 +21,26 @@ Without this permission, commands that query UI elements will fail with a clear 
 
 ```bash
 # From source
-git clone https://github.com/watzon/macos-ax-cli.git
-cd macos-ax-cli
+git clone https://github.com/watzon/ax-cli.git
+cd ax-cli
 cargo install --path .
 ```
+
+## Agent Skill
+
+An agent skill is available at `./skills/ax-cli` that teaches AI agents how to use `ax` effectively for UI inspection tasks. This skill works with any agent framework that supports the skills format.
+
+**Install by copying:**
+```bash
+cp -r skills/ax-cli ~/.claude/skills/
+```
+
+**Or install via npx:**
+```bash
+npx skills install https://github.com/watzon/ax-cli --skill ax-cli
+```
+
+Once installed, agents can use `ax` to inspect application UI trees, query attributes, and assist with accessibility-related development tasks.
 
 ## Usage
 
@@ -137,8 +153,8 @@ Most commands accept these targeting flags:
 ## Building from Source
 
 ```bash
-git clone https://github.com/watzon/macos-ax-cli.git
-cd macos-ax-cli
+git clone https://github.com/watzon/ax-cli.git
+cd ax-cli
 cargo build --release
 # Binary is at target/release/ax
 ```

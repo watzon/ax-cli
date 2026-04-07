@@ -1,5 +1,5 @@
 ---
-name: axcli
+name: ax-cli
 description: >
   Use the `ax` CLI to inspect and interact with macOS applications via accessibility APIs.
   This skill should be used whenever the agent needs to: read what's on screen in a native
