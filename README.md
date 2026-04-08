@@ -19,8 +19,16 @@ Without this permission, commands that query UI elements will fail with a clear 
 
 ## Installation
 
+### Homebrew
+
 ```bash
-# From source
+brew tap watzon/ax
+brew install ax
+```
+
+### From source
+
+```bash
 git clone https://github.com/watzon/ax-cli.git
 cd ax-cli
 cargo install --path .
