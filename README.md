@@ -85,24 +85,28 @@ Shows basic info (role, title, value, position, size), all advanced attributes, 
 ax tree --app Finder
 ax tree --app Finder --depth 3
 ax tree --app Safari --filter button
+ax tree --app Safari --extras          # include frame (position/size) and URLs
+ax tree --app Safari --visible         # only elements visible in the window viewport
 ax tree --pid 1234 --json
 ```
 
 ```
 (AXApplication) [AXStandardWindow]
-├── "Finder" (AXWindow) [AXStandardWindow]
+├── "Finder" (AXWindow) [AXStandardWindow] @(0,38 1440x862)
 │   ├── (AXGroup)
 │   │   ├── (AXToolbar)
-│   │   │   ├── "Back" (AXButton)
-│   │   │   ├── "Forward" (AXButton)
-│   │   │   └── "View" (AXPopUpButton)
+│   │   │   ├── "Back" (AXButton) @(60,52 32x32)
+│   │   │   ├── "Forward" (AXButton) @(96,52 32x32)
+│   │   │   └── "View" (AXPopUpButton) @(200,52 80x32)
 │   │   └── (AXSplitGroup)
 │   │       ├── (AXScrollArea)
 │   │       └── (AXScrollArea)
 │   └── (AXGroup)
 ```
 
-The `--filter` flag keeps only branches containing elements whose role matches the filter, so `--filter button` shows all buttons and their ancestor containers.
+- `--filter` keeps only branches containing elements whose role matches the filter, so `--filter button` shows all buttons and their ancestor containers.
+- `--extras` (`-x`) adds frame data (screen position and size) and URLs (e.g., `AXURL` on link elements) to each node. In JSON mode, frames are structured as `{"x", "y", "width", "height"}` numeric fields.
+- `--visible` filters the tree to only elements whose frames fall within the window's viewport, hiding offscreen/scrolled-away content. Implies `--extras`.
 
 ### List all attributes
 

@@ -109,7 +109,14 @@ fn cmd_tree(cli: &Cli, args: &TreeArgs) -> error::Result<()> {
     let el = app::resolve_app_target(args.target.app.as_deref(), args.target.pid)?;
     element::set_timeout(&el, 5.0);
 
-    let root = tree::build_tree(&el, args.depth, args.filter.as_deref());
+    let extras = args.extras || args.visible;
+    let root = tree::build_tree(&el, args.depth, args.filter.as_deref(), extras);
+
+    let root = if args.visible {
+        tree::filter_to_visible(root)
+    } else {
+        root
+    };
 
     match cli.output_format() {
         OutputFormat::Json => print!("{}", json_fmt::to_json(&root)),

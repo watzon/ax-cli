@@ -9,6 +9,8 @@ use core_foundation::base::{CFGetTypeID, CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
+use core_foundation::url::CFURL;
+use serde::Serialize;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 
@@ -79,6 +81,11 @@ pub fn cftype_to_string(value: &CFType) -> String {
             "?".to_string()
         };
         return format!("<AXUIElement {}>", role);
+    }
+
+    if type_id == CFURL::type_id() {
+        let url: CFURL = unsafe { CFURL::wrap_under_get_rule(value.as_CFTypeRef() as _) };
+        return url.get_string().to_string();
     }
 
     if type_id == unsafe { accessibility_sys::AXValueGetTypeID() } {
@@ -223,5 +230,94 @@ pub fn element_at_position(x: f64, y: f64) -> Result<AXUIElement> {
 pub fn set_timeout(element: &AXUIElement, timeout_secs: f32) {
     unsafe {
         AXUIElementSetMessagingTimeout(element.as_concrete_TypeRef(), timeout_secs);
+    }
+}
+
+/// A screen-coordinate frame (position + size) for an accessibility element.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Frame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Frame {
+    /// Test whether two frames overlap.
+    pub fn intersects(&self, other: &Frame) -> bool {
+        self.x < other.x + other.width
+            && self.x + self.width > other.x
+            && self.y < other.y + other.height
+            && self.y + self.height > other.y
+    }
+}
+
+/// Read the frame (AXPosition + AXSize) of an element, returning None if unavailable.
+pub fn read_frame(element: &AXUIElement) -> Option<Frame> {
+    let position = read_axvalue_point(element, "AXPosition")?;
+    let size = read_axvalue_size(element, "AXSize")?;
+    Some(Frame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+fn read_axvalue_point(element: &AXUIElement, attr: &str) -> Option<CGPoint> {
+    let cf_name = CFString::new(attr);
+    let mut value_ref: CFTypeRef = std::ptr::null_mut();
+    let err = unsafe {
+        accessibility_sys::AXUIElementCopyAttributeValue(
+            element.as_concrete_TypeRef(),
+            cf_name.as_concrete_TypeRef(),
+            &mut value_ref,
+        )
+    };
+    if err != kAXErrorSuccess || value_ref.is_null() {
+        return None;
+    }
+    let _guard = unsafe { CFType::wrap_under_create_rule(value_ref) };
+    let mut point = MaybeUninit::<CGPoint>::uninit();
+    let ok = unsafe {
+        AXValueGetValue(
+            value_ref as _,
+            kAXValueTypeCGPoint,
+            point.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if ok {
+        Some(unsafe { point.assume_init() })
+    } else {
+        None
+    }
+}
+
+fn read_axvalue_size(element: &AXUIElement, attr: &str) -> Option<CGSize> {
+    let cf_name = CFString::new(attr);
+    let mut value_ref: CFTypeRef = std::ptr::null_mut();
+    let err = unsafe {
+        accessibility_sys::AXUIElementCopyAttributeValue(
+            element.as_concrete_TypeRef(),
+            cf_name.as_concrete_TypeRef(),
+            &mut value_ref,
+        )
+    };
+    if err != kAXErrorSuccess || value_ref.is_null() {
+        return None;
+    }
+    let _guard = unsafe { CFType::wrap_under_create_rule(value_ref) };
+    let mut size = MaybeUninit::<CGSize>::uninit();
+    let ok = unsafe {
+        AXValueGetValue(
+            value_ref as _,
+            kAXValueTypeCGSize,
+            size.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if ok {
+        Some(unsafe { size.assume_init() })
+    } else {
+        None
     }
 }

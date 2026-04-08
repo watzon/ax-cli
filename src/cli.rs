@@ -101,6 +101,14 @@ pub struct TreeArgs {
     /// Filter by role (case-insensitive substring match)
     #[arg(long, short)]
     pub filter: Option<String>,
+
+    /// Include frame (position/size) and URL data for each element
+    #[arg(long, short = 'x')]
+    pub extras: bool,
+
+    /// Only show elements visible within the window viewport
+    #[arg(long)]
+    pub visible: bool,
 }
 
 #[derive(Args)]

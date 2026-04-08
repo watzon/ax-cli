@@ -25,6 +25,8 @@ The terminal running `ax` must have Accessibility permission (System Settings > 
 | See what apps are running        | `ax list`                                      |
 | See an app's full UI tree        | `ax tree --app "App Name" --depth 5`           |
 | Find specific element types      | `ax tree --app "App Name" --filter button`     |
+| Tree with positions, sizes, URLs | `ax tree --app "App Name" --extras`             |
+| Only visible (on-screen) elements| `ax tree --app "App Name" --visible`            |
 | Read all attributes of an app    | `ax inspect --app "App Name"`                  |
 | Read the focused element         | `ax inspect --app "App Name" --focused`        |
 | Read element at screen coords    | `ax element-at 500 300`                        |
@@ -38,8 +40,11 @@ The typical workflow for locating a specific piece of information in an app:
 
 1. **Start broad** — `ax tree --app "App Name" --depth 3` for top-level structure
 2. **Go deeper** — increase `--depth`, or use `--filter` to narrow by role
-3. **Search with grep** — `ax tree --app "App Name" --depth 20 --no-color | grep -i "search term"` is very effective
-4. **Inspect specifics** — once you find the area, use `ax inspect` or `ax attrs` to get full details
+3. **See what's visible** — `ax tree --app "App Name" --visible` to focus on what's currently on screen
+4. **Search with grep** — `ax tree --app "App Name" --depth 20 --no-color | grep -i "search term"` is very effective
+5. **Inspect specifics** — once you find the area, use `ax inspect` or `ax attrs` to get full details
+
+To determine which elements are visible on screen, use `--visible`. To extract URLs from links (e.g., post permalinks on X/Twitter), use `--extras` or `--visible` with `--filter link`.
 
 App names are matched as case-insensitive substrings, so `--app safari` matches "Safari" and `--app code` might match "VS Code". If the match is ambiguous, `ax` lists the candidates.
 
@@ -72,11 +77,16 @@ Prints the accessibility tree as an indented hierarchy with unicode box-drawing.
 ```
 ax tree --app Finder --depth 5
 ax tree --app Safari --depth 15 --filter button
+ax tree --app Safari --extras              # include frame + URL data
+ax tree --app Safari --visible             # only viewport-visible elements
+ax tree --app Safari --visible --filter link  # visible links with URLs
 ax tree --pid 1234 --json
 ```
 
 - `--depth N` — how deep to traverse (default: 10). Start with 3-5, go higher for nested content.
 - `--filter ROLE` — keep only branches containing elements whose role matches the substring. `--filter button` shows all AXButton elements and their ancestor containers.
+- `--extras` (`-x`) — include frame data (screen position and size as `@(x,y wxh)`) and URLs (`-> https://...`) for each element. In JSON output, frames are structured as `{"x", "y", "width", "height"}` numeric fields, and URLs appear as a `"url"` string field. Use this to determine element positions and extract links (e.g., `AXURL` on `AXLink` elements).
+- `--visible` — filter the tree to only elements whose frames fall within the window's visible area. Elements scrolled out of view or offscreen are pruned. Implies `--extras`. Useful for determining what the user can currently see.
 
 Web content inside browsers is exposed as deeply nested elements. Use `--depth 15` or higher to reach text content in web apps like X/Twitter, Gmail, Slack, etc.
 
@@ -174,6 +184,9 @@ Common roles in the tree:
 ## Tips
 
 - **Web content is deep.** Browser-rendered content (X/Twitter, Gmail, Slack web) is often 10-20 levels deep. Use `--filter AXStaticText` or pipe through `grep` to find text.
+- **Use `--visible` for viewport awareness.** It filters the tree to only what's on screen, so you can tell what the user is currently looking at without scanning the full tree.
+- **Extract URLs from links.** `--extras` exposes `AXURL` on link elements. For example, X/Twitter timestamp links contain the post permalink URL — use `--visible --filter link --json` to get all visible links with their URLs.
+- **Frame data for positioning.** With `--extras`, every element includes its screen coordinates and size. In JSON output, frames are numeric objects (`x`, `y`, `width`, `height`), ready for programmatic use.
 - **JSON for scripting.** The JSON structure mirrors the tree hierarchy with `children` arrays, making it easy to traverse programmatically.
 - **Elements can go stale.** If an app's UI changes between query and action, you may get "Invalid UI element" errors. Just retry.
 - **Timeout is 5 seconds.** `ax` sets a 5-second timeout per element to avoid hanging on unresponsive apps.

@@ -95,5 +95,28 @@ fn format_node_line(node: &TreeNode, use_color: bool) -> String {
         line.push_str(&id_str);
     }
 
+    // Frame
+    if let Some(ref frame) = node.frame {
+        let frame_str = format!(
+            " @({:.0},{:.0} {:.0}x{:.0})",
+            frame.x, frame.y, frame.width, frame.height
+        );
+        if use_color {
+            line.push_str(&frame_str.dimmed().to_string());
+        } else {
+            line.push_str(&frame_str);
+        }
+    }
+
+    // URL
+    if let Some(ref url) = node.url {
+        let url_str = format!(" -> {}", url);
+        if use_color {
+            line.push_str(&url_str.blue().to_string());
+        } else {
+            line.push_str(&url_str);
+        }
+    }
+
     line
 }

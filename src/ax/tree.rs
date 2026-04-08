@@ -5,6 +5,7 @@ use core_foundation::string::CFString;
 use serde::Serialize;
 
 use crate::ax::attributes::read_attr_display;
+use crate::ax::element::{self, Frame};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeNode {
@@ -14,6 +15,10 @@ pub struct TreeNode {
     pub value: Option<String>,
     pub description: Option<String>,
     pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Frame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<TreeNode>,
     pub depth: usize,
@@ -29,8 +34,25 @@ impl TreeNode {
             .filter_map(|c| c.prune_to_filter(filter))
             .collect();
 
-        // Keep this node if it matches or has matching descendants
         if dominated || !children.is_empty() {
+            Some(TreeNode { children, ..self })
+        } else {
+            None
+        }
+    }
+
+    /// Prune the tree to only keep elements whose frames intersect the viewport.
+    fn prune_to_visible(self, viewport: &Frame) -> Option<TreeNode> {
+        let in_viewport = self
+            .frame
+            .is_some_and(|f| f.intersects(viewport));
+        let children: Vec<TreeNode> = self
+            .children
+            .into_iter()
+            .filter_map(|c| c.prune_to_visible(viewport))
+            .collect();
+
+        if in_viewport || !children.is_empty() {
             Some(TreeNode { children, ..self })
         } else {
             None
@@ -39,8 +61,13 @@ impl TreeNode {
 }
 
 /// Build an accessibility tree from a root element.
-pub fn build_tree(root: &AXUIElement, max_depth: usize, role_filter: Option<&str>) -> TreeNode {
-    let tree = build_tree_recursive(root, 0, max_depth);
+pub fn build_tree(
+    root: &AXUIElement,
+    max_depth: usize,
+    role_filter: Option<&str>,
+    extras: bool,
+) -> TreeNode {
+    let tree = build_tree_recursive(root, 0, max_depth, extras);
 
     // Apply role filter as a post-processing prune so that matching descendants
     // nested inside non-matching containers are preserved.
@@ -52,6 +79,8 @@ pub fn build_tree(root: &AXUIElement, max_depth: usize, role_filter: Option<&str
             value: None,
             description: None,
             identifier: None,
+            frame: None,
+            url: None,
             children: Vec::new(),
             depth: 0,
         })
@@ -60,7 +89,55 @@ pub fn build_tree(root: &AXUIElement, max_depth: usize, role_filter: Option<&str
     }
 }
 
-fn build_tree_recursive(element: &AXUIElement, depth: usize, max_depth: usize) -> TreeNode {
+/// Filter a tree to only elements visible within their respective window frames.
+/// For multi-window apps, each window uses its own frame as the viewport.
+pub fn filter_to_visible(mut root: TreeNode) -> TreeNode {
+    if let Some(vp) = root.frame {
+        // Root itself has a frame (e.g., a window) — use it as the viewport
+        return root.prune_to_visible(&vp).unwrap_or_else(empty_node);
+    }
+
+    // Root is likely an AXApplication — filter each child window independently
+    root.children = root
+        .children
+        .into_iter()
+        .filter_map(|child| {
+            if let Some(vp) = child.frame {
+                child.prune_to_visible(&vp)
+            } else {
+                Some(child) // No frame (structural container), keep as-is
+            }
+        })
+        .collect();
+
+    if root.children.is_empty() {
+        empty_node()
+    } else {
+        root
+    }
+}
+
+fn empty_node() -> TreeNode {
+    TreeNode {
+        role: "No visible elements".to_string(),
+        subrole: None,
+        title: None,
+        value: None,
+        description: None,
+        identifier: None,
+        frame: None,
+        url: None,
+        children: Vec::new(),
+        depth: 0,
+    }
+}
+
+fn build_tree_recursive(
+    element: &AXUIElement,
+    depth: usize,
+    max_depth: usize,
+    extras: bool,
+) -> TreeNode {
     let role = read_attr_display(element, "AXRole").unwrap_or_else(|| "Unknown".to_string());
     let subrole = read_attr_display(element, "AXSubrole");
     let title = read_non_empty_attr(element, "AXTitle");
@@ -68,10 +145,18 @@ fn build_tree_recursive(element: &AXUIElement, depth: usize, max_depth: usize) -
     let description = read_non_empty_attr(element, "AXDescription");
     let identifier = read_non_empty_attr(element, "AXIdentifier");
 
+    let (frame, url) = if extras {
+        let frame = element::read_frame(element);
+        let url = read_non_empty_attr(element, "AXURL");
+        (frame, url)
+    } else {
+        (None, None)
+    };
+
     let children = if depth < max_depth {
         get_children_with_fallback(element, &role)
             .into_iter()
-            .map(|child| build_tree_recursive(&child, depth + 1, max_depth))
+            .map(|child| build_tree_recursive(&child, depth + 1, max_depth, extras))
             .collect()
     } else {
         Vec::new()
@@ -84,6 +169,8 @@ fn build_tree_recursive(element: &AXUIElement, depth: usize, max_depth: usize) -
         value,
         description,
         identifier,
+        frame,
+        url,
         children,
         depth,
     }
