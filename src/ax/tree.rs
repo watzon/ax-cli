@@ -43,9 +43,7 @@ impl TreeNode {
 
     /// Prune the tree to only keep elements whose frames intersect the viewport.
     fn prune_to_visible(self, viewport: &Frame) -> Option<TreeNode> {
-        let in_viewport = self
-            .frame
-            .is_some_and(|f| f.intersects(viewport));
+        let in_viewport = self.frame.is_some_and(|f| f.intersects(viewport));
         let children: Vec<TreeNode> = self
             .children
             .into_iter()
