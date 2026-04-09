@@ -18,6 +18,9 @@ pub enum AxError {
     #[error("Action failed: {action} — {message}")]
     ActionFailed { action: String, message: String },
 
+    #[error("Cannot set attribute '{attribute}': {message}")]
+    SetAttributeError { attribute: String, message: String },
+
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 

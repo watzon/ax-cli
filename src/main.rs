@@ -10,7 +10,9 @@ use clap::Parser;
 use core_foundation::base::TCFType;
 use std::process;
 
-use crate::ax::{actions, app, attributes, element, observer, tree};
+use crate::ax::{
+    actions, app, attributes, catalog, element, mutation, observer, parameterized, tree,
+};
 use crate::cli::*;
 use crate::error::AxError;
 use crate::output::json_fmt;
@@ -25,8 +27,8 @@ fn main() {
         colored::control::set_override(false);
     }
 
-    // Check accessibility permission (skip for list, which uses NSWorkspace)
-    let needs_permission = !matches!(cli.command, Commands::List);
+    // Check accessibility permission (skip for commands that don't need it)
+    let needs_permission = !matches!(cli.command, Commands::List | Commands::Discover(..));
     if needs_permission && !app::check_accessibility_permission(true) {
         eprintln!("Error: Accessibility permission not granted.");
         eprintln!();
@@ -43,6 +45,15 @@ fn main() {
         Commands::Action(ref args) => cmd_action(&cli, args),
         Commands::Watch(ref args) => cmd_watch(&cli, args),
         Commands::ElementAt(ref args) => cmd_element_at(&cli, args),
+        Commands::Discover(ref args) => cmd_discover(&cli, args),
+        Commands::Supported(ref args) => cmd_supported(&cli, args),
+        Commands::Pattrs(ref args) => cmd_pattrs(&cli, args),
+        Commands::Pget(ref args) => cmd_pget(&cli, args),
+        Commands::Get(ref args) => cmd_get(&cli, args),
+        Commands::Set(ref args) => cmd_set(&cli, args),
+        Commands::Click(ref args) => cmd_click(&cli, args),
+        Commands::Focus(ref args) => cmd_focus(&cli, args),
+        Commands::Type(ref args) => cmd_type(&cli, args),
     };
 
     if let Err(e) = result {
@@ -52,6 +63,7 @@ fn main() {
             AxError::AppNotFound(_) => 2,
             AxError::ElementNotFound => 3,
             AxError::ActionFailed { .. } => 4,
+            AxError::SetAttributeError { .. } => 6,
             _ => 5,
         };
         process::exit(code);
@@ -241,6 +253,277 @@ fn cmd_element_at(cli: &Cli, args: &ElementAtArgs) -> error::Result<()> {
     Ok(())
 }
 
+// --- New discovery commands ---
+
+fn cmd_discover(cli: &Cli, args: &DiscoverArgs) -> error::Result<()> {
+    let category = catalog::CatalogCategory::from_str(&args.category).ok_or_else(|| {
+        AxError::InvalidArgument(format!(
+            "Unknown category '{}'. Valid: attributes, parameterized-attributes (pattrs), actions, notifications, roles, subroles",
+            args.category
+        ))
+    })?;
+
+    if let Some(ref term) = args.search {
+        let results = catalog::search_catalog(Some(category), term);
+
+        match cli.output_format() {
+            OutputFormat::Json => {
+                #[derive(serde::Serialize)]
+                struct SearchResult {
+                    category: &'static str,
+                    name: &'static str,
+                    description: &'static str,
+                }
+                let out: Vec<SearchResult> = results
+                    .iter()
+                    .map(|(cat, entry)| SearchResult {
+                        category: cat.label(),
+                        name: entry.name,
+                        description: entry.description,
+                    })
+                    .collect();
+                print!("{}", json_fmt::to_json(&out));
+            }
+            _ => {
+                print!(
+                    "{}",
+                    plain_fmt::format_catalog_search(&results, cli.use_color())
+                );
+            }
+        }
+    } else {
+        let entries = category.entries();
+
+        match cli.output_format() {
+            OutputFormat::Json => {
+                #[derive(serde::Serialize)]
+                struct CatalogOutput {
+                    category: &'static str,
+                    count: usize,
+                    entries: Vec<CatalogEntryOut>,
+                }
+                #[derive(serde::Serialize)]
+                struct CatalogEntryOut {
+                    name: &'static str,
+                    description: &'static str,
+                }
+                let out = CatalogOutput {
+                    category: category.label(),
+                    count: entries.len(),
+                    entries: entries
+                        .iter()
+                        .map(|e| CatalogEntryOut {
+                            name: e.name,
+                            description: e.description,
+                        })
+                        .collect(),
+                };
+                print!("{}", json_fmt::to_json(&out));
+            }
+            _ => {
+                print!(
+                    "{}",
+                    plain_fmt::format_catalog_list(category.label(), entries, cli.use_color())
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_supported(cli: &Cli, args: &SupportedArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let attr_names = attributes::attribute_names(&el)?;
+    let pattr_names = parameterized::parameterized_attribute_names(&el)?;
+    let action_names = parameterized::action_names(&el)?;
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            #[derive(serde::Serialize)]
+            struct SupportedOutput {
+                attributes: Vec<String>,
+                parameterized_attributes: Vec<String>,
+                actions: Vec<String>,
+            }
+            print!(
+                "{}",
+                json_fmt::to_json(&SupportedOutput {
+                    attributes: attr_names,
+                    parameterized_attributes: pattr_names,
+                    actions: action_names,
+                })
+            );
+        }
+        _ => {
+            print!(
+                "{}",
+                plain_fmt::format_supported(
+                    &attr_names,
+                    &pattr_names,
+                    &action_names,
+                    cli.use_color()
+                )
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_pattrs(cli: &Cli, args: &PattrsArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let names = parameterized::parameterized_attribute_names(&el)?;
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            #[derive(serde::Serialize)]
+            struct PattrsOutput {
+                parameterized_attributes: Vec<PattrsEntry>,
+            }
+            #[derive(serde::Serialize)]
+            struct PattrsEntry {
+                name: String,
+                param_type: Option<&'static str>,
+            }
+            let entries: Vec<PattrsEntry> = names
+                .iter()
+                .map(|n| {
+                    let kind = parameterized::param_kind_for_attr(n);
+                    PattrsEntry {
+                        name: n.clone(),
+                        param_type: kind.map(|k| match k {
+                            parameterized::ParamKind::Index => "index",
+                            parameterized::ParamKind::Range => "range",
+                            parameterized::ParamKind::Point => "point",
+                            parameterized::ParamKind::ColumnAndRow => "column_and_row",
+                        }),
+                    }
+                })
+                .collect();
+            print!(
+                "{}",
+                json_fmt::to_json(&PattrsOutput {
+                    parameterized_attributes: entries,
+                })
+            );
+        }
+        _ => {
+            print!(
+                "{}",
+                plain_fmt::format_parameterized_attrs(&names, cli.use_color())
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_pget(cli: &Cli, args: &PgetArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    // Build the parameter CFType based on what flags were provided
+    let param = if let Some(idx) = args.index {
+        parameterized::build_index_param(idx)
+    } else if let Some(ref range_str) = args.range {
+        let (loc, len) = parameterized::parse_range(range_str).map_err(AxError::InvalidArgument)?;
+        parameterized::build_range_param(loc, len)
+    } else if let Some(ref point_str) = args.param_point {
+        let (x, y) = parse_point(point_str).map_err(AxError::InvalidArgument)?;
+        parameterized::build_point_param(x, y)
+    } else if let Some(ref cr_str) = args.col_row {
+        let (col, row) = parameterized::parse_range(cr_str).map_err(|_| {
+            AxError::InvalidArgument(format!(
+                "Invalid col,row format '{}', expected 'col,row'",
+                cr_str
+            ))
+        })?;
+        parameterized::build_column_row_param(col, row)
+    } else {
+        // Try to infer from the attribute name
+        let kind = parameterized::param_kind_for_attr(&args.attribute);
+        return Err(AxError::InvalidArgument(format!(
+            "No parameter provided. '{}' expects: {}",
+            args.attribute,
+            match kind {
+                Some(parameterized::ParamKind::Index) => "--index <n>",
+                Some(parameterized::ParamKind::Range) => "--range <location,length>",
+                Some(parameterized::ParamKind::Point) => "--param-point <x,y>",
+                Some(parameterized::ParamKind::ColumnAndRow) => "--col-row <col,row>",
+                None => "--index, --range, --param-point, or --col-row",
+            }
+        )));
+    };
+
+    let value = parameterized::read_parameterized_attribute(&el, &args.attribute, &param)?;
+    let display = element::cftype_to_string(&value);
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            print!(
+                "{}",
+                json_fmt::to_json(&serde_json::json!({
+                    "attribute": args.attribute,
+                    "value": display,
+                }))
+            );
+        }
+        _ => {
+            println!("{}", display);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_get(cli: &Cli, args: &GetArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let value = attributes::read_attribute(&el, &args.attribute).ok_or_else(|| {
+        AxError::AttributeError {
+            name: args.attribute.clone(),
+            message: "No value (attribute may not exist on this element)".to_string(),
+        }
+    })?;
+    let display = element::cftype_to_string(&value);
+    let settable = {
+        let cf_name = core_foundation::string::CFString::new(&args.attribute);
+        let mut s: u8 = 0;
+        let err = unsafe {
+            accessibility_sys::AXUIElementIsAttributeSettable(
+                el.as_concrete_TypeRef(),
+                cf_name.as_concrete_TypeRef(),
+                &mut s as *mut u8 as *mut _,
+            )
+        };
+        err == accessibility_sys::kAXErrorSuccess && s != 0
+    };
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            print!(
+                "{}",
+                json_fmt::to_json(&serde_json::json!({
+                    "attribute": args.attribute,
+                    "value": display,
+                    "settable": settable,
+                }))
+            );
+        }
+        _ => {
+            println!("{}", display);
+        }
+    }
+
+    Ok(())
+}
+
 /// Resolve an element from targeting arguments: --app/--pid, --focused, --point.
 fn resolve_element_target(
     target: &TargetArgs,
@@ -270,4 +553,204 @@ fn resolve_element_target(
 
     // Default: return the app element itself
     Ok(app_el)
+}
+
+/// Resolve element from the new ElementTargetArgs (shared by supported, pattrs, pget, get).
+fn resolve_element_target_ext(args: &ElementTargetArgs) -> error::Result<AXUIElement> {
+    resolve_element_target(&args.target, args.focused, args.point.as_deref())
+}
+
+// --- Mutation commands ---
+
+fn cmd_set(cli: &Cli, args: &SetArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let vtype = mutation::ValueType::from_str(&args.value_type).ok_or_else(|| {
+        AxError::InvalidArgument(format!(
+            "Unknown value type '{}'. Valid: string, bool, int, float",
+            args.value_type
+        ))
+    })?;
+
+    // Read before-value for verification output
+    let before = attributes::read_attr_display(&el, &args.attribute);
+
+    if args.force {
+        // Skip settability check, just try it
+        let cf_value = mutation::build_cf_value(&args.value, vtype)?;
+        mutation::set_attribute(&el, &args.attribute, &cf_value)?;
+    } else {
+        mutation::set_attribute_typed(&el, &args.attribute, &args.value, vtype)?;
+    }
+
+    // Read back after-value for verification
+    let after = attributes::read_attr_display(&el, &args.attribute);
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ok",
+                    "attribute": args.attribute,
+                    "type": vtype.label(),
+                    "before": before,
+                    "after": after,
+                })
+            );
+        }
+        _ => {
+            println!(
+                "{}",
+                plain_fmt::format_set_result(
+                    &args.attribute,
+                    before.as_deref(),
+                    after.as_deref(),
+                    cli.use_color(),
+                )
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_click(cli: &Cli, args: &ClickArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    // Read element info for output context
+    let role = attributes::read_attr_display(&el, "AXRole").unwrap_or_default();
+    let title = attributes::read_attr_display(&el, "AXTitle");
+
+    actions::perform_action(&el, "AXPress")?;
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ok",
+                    "action": "AXPress",
+                    "role": role,
+                    "title": title,
+                })
+            );
+        }
+        _ => {
+            println!(
+                "{}",
+                plain_fmt::format_action_result(
+                    "AXPress",
+                    &role,
+                    title.as_deref(),
+                    cli.use_color()
+                )
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_focus(cli: &Cli, args: &FocusArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let role = attributes::read_attr_display(&el, "AXRole").unwrap_or_default();
+    let title = attributes::read_attr_display(&el, "AXTitle");
+
+    // Set AXFocused = true
+    let cf_true = core_foundation::boolean::CFBoolean::true_value();
+    mutation::set_attribute(&el, "AXFocused", &cf_true.as_CFType())?;
+
+    // Verify
+    let focused_now = attributes::read_attr_display(&el, "AXFocused");
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ok",
+                    "attribute": "AXFocused",
+                    "value": true,
+                    "verified": focused_now.as_deref() == Some("true"),
+                    "role": role,
+                    "title": title,
+                })
+            );
+        }
+        _ => {
+            println!(
+                "{}",
+                plain_fmt::format_focus_result(
+                    &role,
+                    title.as_deref(),
+                    focused_now.as_deref() == Some("true"),
+                    cli.use_color(),
+                )
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_type(cli: &Cli, args: &TypeArgs) -> error::Result<()> {
+    let el = resolve_element_target_ext(&args.element)?;
+    element::set_timeout(&el, 5.0);
+
+    let role = attributes::read_attr_display(&el, "AXRole").unwrap_or_default();
+
+    // Read before-value
+    let before = attributes::read_attr_display(&el, "AXValue");
+
+    // First try to focus the element (best-effort, don't fail if it doesn't work)
+    let cf_true = core_foundation::boolean::CFBoolean::true_value();
+    let _ = mutation::set_attribute(&el, "AXFocused", &cf_true.as_CFType());
+
+    // Set AXValue to the text
+    let cf_text = core_foundation::string::CFString::new(&args.text);
+    mutation::set_attribute(&el, "AXValue", &cf_text.as_CFType()).map_err(|_| {
+        AxError::SetAttributeError {
+            attribute: "AXValue".to_string(),
+            message: format!(
+                "Cannot set text on this element (role: {}). The element may not be editable.",
+                role
+            ),
+        }
+    })?;
+
+    // Read back after-value
+    let after = attributes::read_attr_display(&el, "AXValue");
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ok",
+                    "attribute": "AXValue",
+                    "before": before,
+                    "after": after,
+                    "role": role,
+                })
+            );
+        }
+        _ => {
+            println!(
+                "{}",
+                plain_fmt::format_type_result(
+                    &role,
+                    before.as_deref(),
+                    after.as_deref(),
+                    cli.use_color(),
+                )
+            );
+        }
+    }
+
+    Ok(())
 }

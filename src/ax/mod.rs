@@ -1,6 +1,9 @@
 pub mod actions;
 pub mod app;
 pub mod attributes;
+pub mod catalog;
 pub mod element;
+pub mod mutation;
 pub mod observer;
+pub mod parameterized;
 pub mod tree;

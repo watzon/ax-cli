@@ -3,7 +3,9 @@ use colored::Colorize;
 use crate::ax::actions::ActionInfo;
 use crate::ax::app::AppInfo;
 use crate::ax::attributes::{AttributeInfo, ElementInfo};
+use crate::ax::catalog::{CatalogCategory, CatalogEntry};
 use crate::ax::observer::NotificationEvent;
+use crate::ax::parameterized;
 
 /// Format app list as a table.
 pub fn format_app_list(apps: &[AppInfo], use_color: bool) -> String {
@@ -261,4 +263,248 @@ fn format_field(output: &mut String, label: &str, value: &str, width: usize, use
     } else {
         output.push_str(&format!("  {:>width$}  {}\n", label, value, width = width));
     }
+}
+
+// --- Discovery formatters ---
+
+/// Format catalog entries as a plain list.
+pub fn format_catalog_list(category: &str, entries: &[CatalogEntry], use_color: bool) -> String {
+    let mut output = String::new();
+    let header = format!("{} ({} entries)", category, entries.len());
+    if use_color {
+        output.push_str(&format!("── {} ──\n", header.bold()));
+    } else {
+        output.push_str(&format!("── {} ──\n", header));
+    }
+
+    let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(20);
+    for entry in entries {
+        if use_color {
+            output.push_str(&format!(
+                "  {:>width$}  {}\n",
+                entry.name.cyan(),
+                entry.description.dimmed(),
+                width = name_width,
+            ));
+        } else {
+            output.push_str(&format!(
+                "  {:>width$}  {}\n",
+                entry.name,
+                entry.description,
+                width = name_width,
+            ));
+        }
+    }
+    output
+}
+
+/// Format catalog search results.
+pub fn format_catalog_search(
+    results: &[(CatalogCategory, &CatalogEntry)],
+    use_color: bool,
+) -> String {
+    if results.is_empty() {
+        return "No matches found.\n".to_string();
+    }
+
+    let mut output = String::new();
+    let header = format!("{} match(es)", results.len());
+    if use_color {
+        output.push_str(&format!("── {} ──\n", header.bold()));
+    } else {
+        output.push_str(&format!("── {} ──\n", header));
+    }
+
+    let name_width = results
+        .iter()
+        .map(|(_, e)| e.name.len())
+        .max()
+        .unwrap_or(20);
+    for (cat, entry) in results {
+        if use_color {
+            output.push_str(&format!(
+                "  {:>width$}  {}  {}\n",
+                entry.name.cyan(),
+                format!("[{}]", cat.label()).dimmed(),
+                entry.description.dimmed(),
+                width = name_width,
+            ));
+        } else {
+            output.push_str(&format!(
+                "  {:>width$}  [{}]  {}\n",
+                entry.name,
+                cat.label(),
+                entry.description,
+                width = name_width,
+            ));
+        }
+    }
+    output
+}
+
+/// Format the `supported` command output.
+pub fn format_supported(
+    attrs: &[String],
+    pattrs: &[String],
+    actions: &[String],
+    use_color: bool,
+) -> String {
+    let mut output = String::new();
+
+    let section = |out: &mut String, title: &str, items: &[String], use_color: bool| {
+        let header = format!("{} ({})", title, items.len());
+        if use_color {
+            out.push_str(&format!("── {} ──\n", header.bold()));
+        } else {
+            out.push_str(&format!("── {} ──\n", header));
+        }
+        if items.is_empty() {
+            out.push_str("  (none)\n");
+        } else {
+            for item in items {
+                if use_color {
+                    out.push_str(&format!("  {}\n", item.cyan()));
+                } else {
+                    out.push_str(&format!("  {}\n", item));
+                }
+            }
+        }
+    };
+
+    section(&mut output, "Attributes", attrs, use_color);
+    output.push('\n');
+    section(&mut output, "Parameterized Attributes", pattrs, use_color);
+    output.push('\n');
+    section(&mut output, "Actions", actions, use_color);
+
+    output
+}
+
+// --- Mutation formatters ---
+
+/// Format the result of `ax set`.
+pub fn format_set_result(
+    attribute: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    use_color: bool,
+) -> String {
+    let before_str = before.unwrap_or("<no value>");
+    let after_str = after.unwrap_or("<no value>");
+    if use_color {
+        format!(
+            "{} {} {} → {}",
+            "Set".green().bold(),
+            attribute.cyan(),
+            before_str.dimmed(),
+            after_str.bold(),
+        )
+    } else {
+        format!("Set {}  {} → {}", attribute, before_str, after_str)
+    }
+}
+
+/// Format the result of `ax click`.
+pub fn format_action_result(
+    action: &str,
+    role: &str,
+    title: Option<&str>,
+    use_color: bool,
+) -> String {
+    let target = match title {
+        Some(t) if !t.is_empty() => format!("{} \"{}\"", role, t),
+        _ => role.to_string(),
+    };
+    if use_color {
+        format!(
+            "{} {} on {}",
+            "Performed".green().bold(),
+            action.cyan(),
+            target.bold(),
+        )
+    } else {
+        format!("Performed {} on {}", action, target)
+    }
+}
+
+/// Format the result of `ax focus`.
+pub fn format_focus_result(
+    role: &str,
+    title: Option<&str>,
+    verified: bool,
+    use_color: bool,
+) -> String {
+    let target = match title {
+        Some(t) if !t.is_empty() => format!("{} \"{}\"", role, t),
+        _ => role.to_string(),
+    };
+    let status = if verified {
+        "Focused"
+    } else {
+        "Focus sent (unverified)"
+    };
+    if use_color {
+        format!("{} {}", status.green().bold(), target.bold())
+    } else {
+        format!("{} {}", status, target)
+    }
+}
+
+/// Format the result of `ax type`.
+pub fn format_type_result(
+    role: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    use_color: bool,
+) -> String {
+    let before_str = before.unwrap_or("<empty>");
+    let after_str = after.unwrap_or("<empty>");
+    if use_color {
+        format!(
+            "{} into {} {} → {}",
+            "Typed".green().bold(),
+            role.cyan(),
+            before_str.dimmed(),
+            after_str.bold(),
+        )
+    } else {
+        format!("Typed into {}  {} → {}", role, before_str, after_str)
+    }
+}
+
+/// Format parameterized attribute names.
+pub fn format_parameterized_attrs(names: &[String], use_color: bool) -> String {
+    if names.is_empty() {
+        return "No parameterized attributes.\n".to_string();
+    }
+
+    let mut output = String::new();
+    let name_width = names.iter().map(|n| n.len()).max().unwrap_or(20);
+
+    for name in names {
+        let kind = parameterized::param_kind_for_attr(name);
+        let hint = match kind {
+            Some(parameterized::ParamKind::Index) => "param: --index <n>",
+            Some(parameterized::ParamKind::Range) => "param: --range <loc,len>",
+            Some(parameterized::ParamKind::Point) => "param: --param-point <x,y>",
+            Some(parameterized::ParamKind::ColumnAndRow) => "param: --col-row <col,row>",
+            None => "",
+        };
+        if use_color {
+            output.push_str(&format!(
+                "  {:>width$}  {}\n",
+                name.cyan(),
+                hint.dimmed(),
+                width = name_width,
+            ));
+        } else {
+            output.push_str(&format!(
+                "  {:>width$}  {}\n",
+                name,
+                hint,
+                width = name_width,
+            ));
+        }
+    }
+    output
 }

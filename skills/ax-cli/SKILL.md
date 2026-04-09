@@ -14,9 +14,9 @@ description: >
 
 # ax — macOS Accessibility Inspector CLI
 
-`ax` lets you inspect and interact with any running macOS application's UI from the terminal. It reads element hierarchies, attributes, text content, and can perform actions like clicking buttons — all via the macOS Accessibility framework.
+`ax` lets you inspect and interact with any running macOS application's UI from the terminal. It reads element hierarchies, attributes, text content, parameterized values, and can perform actions like clicking buttons, all via the macOS Accessibility framework.
 
-The terminal running `ax` must have Accessibility permission (System Settings > Privacy & Security > Accessibility). If a command fails with a permission error, tell the user to add their terminal app there and restart it.
+The terminal running `ax` must have Accessibility permission (System Settings > Privacy & Security > Accessibility) for all live-element commands. `ax list` and `ax discover` do not require that permission. If a live query fails with a permission error, tell the user to add their terminal app there and restart it.
 
 ## Quick Reference
 
@@ -29,9 +29,18 @@ The terminal running `ax` must have Accessibility permission (System Settings > 
 | Only visible (on-screen) elements| `ax tree --app "App Name" --visible`            |
 | Read all attributes of an app    | `ax inspect --app "App Name"`                  |
 | Read the focused element         | `ax inspect --app "App Name" --focused`        |
+| Read a single attribute          | `ax get AXTitle --app "App Name" --focused`    |
+| See what an element supports     | `ax supported --app "App Name" --focused`      |
+| List parameterized attributes    | `ax pattrs --app "App Name" --focused`         |
+| Read a parameterized value       | `ax pget AXStringForRange --app "App Name" --focused --range 0,120` |
 | Read element at screen coords    | `ax element-at 500 300`                        |
 | Click a button or trigger action | `ax action AXPress --app "App Name" --focused` |
+| Click (shorthand)                | `ax click --app "App Name" --focused`          |
+| Focus an element                 | `ax focus --app "App Name" --focused`          |
+| Set an attribute value           | `ax set AXValue "text" --app "App Name" --focused` |
+| Type text into an input          | `ax type "hello" --app "App Name" --focused`   |
 | Watch for UI changes             | `ax watch --app "App Name"`                    |
+| Explore AX symbol names          | `ax discover attributes --search title`        |
 | Get machine-readable output      | Add `--json` to any command                    |
 
 ## How to Find Things
@@ -42,7 +51,9 @@ The typical workflow for locating a specific piece of information in an app:
 2. **Go deeper** — increase `--depth`, or use `--filter` to narrow by role
 3. **See what's visible** — `ax tree --app "App Name" --visible` to focus on what's currently on screen
 4. **Search with grep** — `ax tree --app "App Name" --depth 20 --no-color | grep -i "search term"` is very effective
-5. **Inspect specifics** — once you find the area, use `ax inspect` or `ax attrs` to get full details
+5. **Inspect specifics** — once you find the area, use `ax inspect`, `ax attrs`, `ax get`, or `ax pget` depending on how much data you need
+
+When you need to know Apple's AX symbol names before querying a live element, start with `ax discover`.
 
 To determine which elements are visible on screen, use `--visible`. To extract URLs from links (e.g., post permalinks on X/Twitter), use `--extras` or `--visible` with `--filter link`.
 
@@ -69,6 +80,26 @@ Lists running applications (name, PID, bundle ID). Works without accessibility p
 ax list
 ax list --json
 ```
+
+### ax discover
+
+Explores the built-in AX catalog shipped with the tool. Use this when you need the correct attribute, action, notification, role, or subrole name.
+
+```
+ax discover attributes
+ax discover actions --search press
+ax discover notifications --json
+ax discover pattrs --search range
+```
+
+Valid categories:
+
+- `attributes`
+- `parameterized-attributes` / `pattrs`
+- `actions`
+- `notifications`
+- `roles`
+- `subroles`
 
 ### ax tree
 
@@ -110,6 +141,56 @@ ax attrs --app Finder
 ax attrs --app Safari --focused --json
 ```
 
+### ax get
+
+Reads one named attribute from a live element. Prefer this over `ax attrs` when you only need a single value.
+
+```
+ax get AXFocusedWindow --app Finder
+ax get AXValue --app Safari --focused --json
+ax get AXTitle --point 500,300
+```
+
+### ax supported
+
+Shows which attributes, parameterized attributes, and actions a live element supports right now.
+
+```
+ax supported --app Safari --focused
+ax supported --point 500,300 --json
+```
+
+This command should be treated as authoritative runtime support, not just a catalog lookup.
+
+### ax pattrs
+
+Lists parameterized attributes available on a live element.
+
+```
+ax pattrs --app Safari --focused
+ax pattrs --point 500,300 --json
+```
+
+Use this before `ax pget` when you do not know which parameterized APIs the element exposes.
+
+### ax pget
+
+Reads one parameterized attribute from a live element.
+
+```
+ax pget AXStringForRange --app Safari --focused --range 0,120
+ax pget AXRangeForPosition --app Safari --focused --param-point 640,480
+ax pget AXLineForIndex --app TextEdit --focused --index 42 --json
+ax pget AXCellForColumnAndRow --app Numbers --focused --col-row 2,5
+```
+
+Parameter flags:
+
+- `--index <n>`
+- `--range <location,length>`
+- `--param-point <x,y>`
+- `--col-row <col,row>`
+
 ### ax action
 
 Performs an accessibility action on an element.
@@ -138,6 +219,50 @@ Returns info about the element at given screen coordinates. Useful when you know
 ax element-at 500 300
 ax element-at 0 0 --json
 ```
+
+### ax set
+
+Sets a writable attribute on an element. Requires `--type` to specify the value type.
+
+```
+ax set AXValue "Hello" --app TextEdit --focused
+ax set AXFocused true --type bool --app Safari --focused
+ax set AXValue 42 --type int --app Calculator --focused
+```
+
+- `--type string|bool|int|float` — value type (default: `string`)
+- `--force` — skip settability pre-check
+
+Shows before/after values for verification. In JSON mode, returns `{"status", "attribute", "type", "before", "after"}`.
+
+### ax click
+
+Shorthand for `ax action AXPress`. Clicks/activates the targeted element.
+
+```
+ax click --app Calculator --focused
+ax click --point 500,300
+```
+
+### ax focus
+
+Sets `AXFocused = true` on the target element. Verifies the focus change and reports success.
+
+```
+ax focus --app Safari --focused
+ax focus --point 500,300
+```
+
+### ax type
+
+Replaces the `AXValue` of an editable element with the given text. Best-effort focuses the element first.
+
+```
+ax type "Hello, world!" --app TextEdit --focused
+ax type "search query" --app Safari --focused --json
+```
+
+Only works on elements with a settable `AXValue` (typically `AXTextField`, `AXTextArea`). Does **not** synthesize keystrokes — replaces the entire field value.
 
 ### ax watch
 
@@ -185,9 +310,12 @@ Common roles in the tree:
 
 - **Web content is deep.** Browser-rendered content (X/Twitter, Gmail, Slack web) is often 10-20 levels deep. Use `--filter AXStaticText` or pipe through `grep` to find text.
 - **Use `--visible` for viewport awareness.** It filters the tree to only what's on screen, so you can tell what the user is currently looking at without scanning the full tree.
+- **Use `ax discover` before guessing names.** If you are not sure whether the right symbol is `AXValueDescription`, `AXDescription`, or `AXHelp`, search the catalog first.
+- **Use `ax supported` before assuming runtime support.** The catalog tells you what exists in the API; `supported` tells you what the current element actually exposes.
+- **Use `ax get` and `ax pget` for surgical reads.** They are faster and easier to parse than `inspect` or `attrs` when you only need one value.
 - **Extract URLs from links.** `--extras` exposes `AXURL` on link elements. For example, X/Twitter timestamp links contain the post permalink URL — use `--visible --filter link --json` to get all visible links with their URLs.
 - **Frame data for positioning.** With `--extras`, every element includes its screen coordinates and size. In JSON output, frames are numeric objects (`x`, `y`, `width`, `height`), ready for programmatic use.
 - **JSON for scripting.** The JSON structure mirrors the tree hierarchy with `children` arrays, making it easy to traverse programmatically.
 - **Elements can go stale.** If an app's UI changes between query and action, you may get "Invalid UI element" errors. Just retry.
 - **Timeout is 5 seconds.** `ax` sets a 5-second timeout per element to avoid hanging on unresponsive apps.
-- **ax list always works.** It doesn't need accessibility permission, so use it to discover app names and PIDs even before permission is granted.
+- **`ax list` and `ax discover` always work.** They do not need accessibility permission, so use them to discover apps and symbol names before permission is granted.
