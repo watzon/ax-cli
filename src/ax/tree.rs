@@ -9,6 +9,8 @@ use crate::ax::element::{self, Frame};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeNode {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     pub role: String,
     pub subrole: Option<String>,
     pub title: Option<String>,
@@ -64,14 +66,16 @@ pub fn build_tree(
     max_depth: usize,
     role_filter: Option<&str>,
     extras: bool,
+    show_paths: bool,
 ) -> TreeNode {
-    let tree = build_tree_recursive(root, 0, max_depth, extras);
+    let tree = build_tree_recursive(root, 0, max_depth, extras, show_paths, "0".to_string());
 
     // Apply role filter as a post-processing prune so that matching descendants
     // nested inside non-matching containers are preserved.
     if let Some(filter) = role_filter {
         tree.prune_to_filter(filter).unwrap_or_else(|| TreeNode {
             role: "No matches".to_string(),
+            path: None,
             subrole: None,
             title: None,
             value: None,
@@ -115,8 +119,49 @@ pub fn filter_to_visible(mut root: TreeNode) -> TreeNode {
     }
 }
 
+pub fn find_by_path(root: &AXUIElement, path: &str) -> Option<AXUIElement> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut segments = trimmed.split('.');
+    if segments.next()? != "0" {
+        return None;
+    }
+
+    let mut current = root.clone();
+    for segment in segments {
+        let index = segment.parse::<usize>().ok()?;
+        let children = get_children_with_fallback(
+            &current,
+            &read_attr_display(&current, "AXRole").unwrap_or_default(),
+        );
+        current = children.get(index)?.clone();
+    }
+
+    Some(current)
+}
+
+pub fn find_by_identifier(root: &AXUIElement, identifier: &str) -> Option<AXUIElement> {
+    let candidate = read_non_empty_attr(root, "AXIdentifier");
+    if candidate.as_deref() == Some(identifier) {
+        return Some(root.clone());
+    }
+
+    let role = read_attr_display(root, "AXRole").unwrap_or_default();
+    for child in get_children_with_fallback(root, &role) {
+        if let Some(found) = find_by_identifier(&child, identifier) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
 fn empty_node() -> TreeNode {
     TreeNode {
+        path: None,
         role: "No visible elements".to_string(),
         subrole: None,
         title: None,
@@ -135,6 +180,8 @@ fn build_tree_recursive(
     depth: usize,
     max_depth: usize,
     extras: bool,
+    show_paths: bool,
+    path: String,
 ) -> TreeNode {
     let role = read_attr_display(element, "AXRole").unwrap_or_else(|| "Unknown".to_string());
     let subrole = read_attr_display(element, "AXSubrole");
@@ -154,13 +201,24 @@ fn build_tree_recursive(
     let children = if depth < max_depth {
         get_children_with_fallback(element, &role)
             .into_iter()
-            .map(|child| build_tree_recursive(&child, depth + 1, max_depth, extras))
+            .enumerate()
+            .map(|(index, child)| {
+                build_tree_recursive(
+                    &child,
+                    depth + 1,
+                    max_depth,
+                    extras,
+                    show_paths,
+                    format!("{}.{}", path, index),
+                )
+            })
             .collect()
     } else {
         Vec::new()
     };
 
     TreeNode {
+        path: show_paths.then_some(path),
         role,
         subrole,
         title,

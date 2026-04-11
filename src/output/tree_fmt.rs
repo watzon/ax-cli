@@ -37,6 +37,15 @@ fn format_node(output: &mut String, node: &TreeNode, prefix: &str, is_last: bool
 fn format_node_line(node: &TreeNode, use_color: bool) -> String {
     let mut parts = Vec::new();
 
+    if let Some(ref path) = node.path {
+        let path_display = if use_color {
+            format!("[{}]", path).dimmed().to_string()
+        } else {
+            format!("[{}]", path)
+        };
+        parts.push(path_display);
+    }
+
     // Title in quotes
     if let Some(ref title) = node.title {
         if use_color {

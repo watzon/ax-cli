@@ -1,13 +1,16 @@
 #![allow(unexpected_cfgs)]
 
 mod ax;
+mod capture;
 mod cli;
 mod error;
 mod output;
 
 use accessibility::AXUIElement;
+use base64::Engine;
 use clap::Parser;
 use core_foundation::base::TCFType;
+use screencapturekit::cg::CGRect;
 use std::process;
 
 use crate::ax::{
@@ -27,14 +30,24 @@ fn main() {
         colored::control::set_override(false);
     }
 
-    // Check accessibility permission (skip for commands that don't need it)
-    let needs_permission = !matches!(cli.command, Commands::List | Commands::Discover(..));
-    if needs_permission && !app::check_accessibility_permission(true) {
+    if command_needs_accessibility(&cli.command) && !app::check_accessibility_permission(true) {
         eprintln!("Error: Accessibility permission not granted.");
         eprintln!();
         eprintln!("Enable it in: System Settings > Privacy & Security > Accessibility");
         eprintln!("Add this terminal application to the list and restart.");
         process::exit(1);
+    }
+
+    if command_needs_screen_capture(&cli.command) {
+        if let Err(err) = capture::ensure_screen_capture_permission(true) {
+            eprintln!("Error: {}", err);
+            eprintln!();
+            eprintln!(
+                "Enable it in: System Settings > Privacy & Security > Screen & System Audio Recording"
+            );
+            eprintln!("Add this terminal application to the list and restart if prompted.");
+            process::exit(7);
+        }
     }
 
     let result = match cli.command {
@@ -54,6 +67,7 @@ fn main() {
         Commands::Click(ref args) => cmd_click(&cli, args),
         Commands::Focus(ref args) => cmd_focus(&cli, args),
         Commands::Type(ref args) => cmd_type(&cli, args),
+        Commands::Screenshot(ref args) => cmd_screenshot(&cli, args),
     };
 
     if let Err(e) = result {
@@ -64,10 +78,23 @@ fn main() {
             AxError::ElementNotFound => 3,
             AxError::ActionFailed { .. } => 4,
             AxError::SetAttributeError { .. } => 6,
+            AxError::ScreenCaptureNotTrusted => 7,
             _ => 5,
         };
         process::exit(code);
     }
+}
+
+fn command_needs_accessibility(command: &Commands) -> bool {
+    match command {
+        Commands::List | Commands::Discover(..) => false,
+        Commands::Screenshot(args) => args.rect.is_none(),
+        _ => true,
+    }
+}
+
+fn command_needs_screen_capture(command: &Commands) -> bool {
+    matches!(command, Commands::Screenshot(..))
 }
 
 fn cmd_list(cli: &Cli) -> error::Result<()> {
@@ -122,7 +149,13 @@ fn cmd_tree(cli: &Cli, args: &TreeArgs) -> error::Result<()> {
     element::set_timeout(&el, 5.0);
 
     let extras = args.extras || args.visible;
-    let root = tree::build_tree(&el, args.depth, args.filter.as_deref(), extras);
+    let root = tree::build_tree(
+        &el,
+        args.depth,
+        args.filter.as_deref(),
+        extras,
+        args.show_paths,
+    );
 
     let root = if args.visible {
         tree::filter_to_visible(root)
@@ -133,6 +166,94 @@ fn cmd_tree(cli: &Cli, args: &TreeArgs) -> error::Result<()> {
     match cli.output_format() {
         OutputFormat::Json => print!("{}", json_fmt::to_json(&root)),
         _ => print!("{}", tree_fmt::format_tree(&root, cli.use_color())),
+    }
+
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ScreenshotRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+struct ResolvedScreenshotTarget {
+    kind: &'static str,
+    selector: String,
+    rect: CGRect,
+}
+
+impl ResolvedScreenshotTarget {
+    fn rect_for_output(&self) -> ScreenshotRect {
+        ScreenshotRect {
+            x: self.rect.x,
+            y: self.rect.y,
+            width: self.rect.width,
+            height: self.rect.height,
+        }
+    }
+}
+
+fn cmd_screenshot(cli: &Cli, args: &ScreenshotArgs) -> error::Result<()> {
+    if args.out.is_none() && !args.base64 {
+        return Err(AxError::InvalidArgument(
+            "screenshot output requires --out <path>, --base64, or both".to_string(),
+        ));
+    }
+
+    let target = resolve_screenshot_target(args)?;
+    let image = capture::capture_rect(target.rect, args.image_format)?;
+
+    if let Some(path) = &args.out {
+        std::fs::write(path, &image.bytes)
+            .map_err(|err| AxError::ScreenshotUnavailable(err.to_string()))?;
+    }
+
+    let base64 = args
+        .base64
+        .then(|| base64::engine::general_purpose::STANDARD.encode(&image.bytes));
+
+    match cli.output_format() {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ok",
+                    "target": target.kind,
+                    "selector": target.selector,
+                    "rect": target.rect_for_output(),
+                    "format": image.format.as_str(),
+                    "width": image.width,
+                    "height": image.height,
+                    "path": args.out,
+                    "base64": base64,
+                })
+            );
+        }
+        _ => {
+            if let Some(path) = &args.out {
+                println!(
+                    "Saved {} screenshot to {} ({}x{}, @ {:.0},{:.0} {:.0}x{:.0})",
+                    image.format.as_str(),
+                    path,
+                    image.width,
+                    image.height,
+                    target.rect.x,
+                    target.rect.y,
+                    target.rect.width,
+                    target.rect.height,
+                );
+            }
+            if let Some(base64) = base64 {
+                if args.out.is_some() {
+                    println!();
+                    println!("Base64 {}:", image.format.as_str());
+                }
+                println!("{}", base64);
+            }
+        }
     }
 
     Ok(())
@@ -558,6 +679,121 @@ fn resolve_element_target(
 /// Resolve element from the new ElementTargetArgs (shared by supported, pattrs, pget, get).
 fn resolve_element_target_ext(args: &ElementTargetArgs) -> error::Result<AXUIElement> {
     resolve_element_target(&args.target, args.focused, args.point.as_deref())
+}
+
+fn resolve_screenshot_target(args: &ScreenshotArgs) -> error::Result<ResolvedScreenshotTarget> {
+    let has_app_scope = args.element.target.app.is_some() || args.element.target.pid.is_some();
+    let has_live_selector = args.element.focused || args.element.point.is_some() || has_app_scope;
+
+    if args.rect.is_some()
+        && (args.identifier.is_some() || args.path.is_some() || has_live_selector)
+    {
+        return Err(AxError::InvalidScreenshotTarget(
+            "--rect cannot be combined with element selectors".to_string(),
+        ));
+    }
+
+    if args.identifier.is_some() && args.path.is_some() {
+        return Err(AxError::InvalidScreenshotTarget(
+            "use only one of --identifier or --path".to_string(),
+        ));
+    }
+
+    if let Some(rect) = &args.rect {
+        let (x, y, width, height) = parse_rect(rect).map_err(AxError::InvalidArgument)?;
+        return Ok(ResolvedScreenshotTarget {
+            kind: "rect",
+            selector: rect.clone(),
+            rect: CGRect::new(x, y, width, height),
+        });
+    }
+
+    if let Some(identifier) = &args.identifier {
+        if args.element.focused || args.element.point.is_some() {
+            return Err(AxError::InvalidScreenshotTarget(
+                "--identifier cannot be combined with --focused or --point".to_string(),
+            ));
+        }
+        if !has_app_scope {
+            return Err(AxError::InvalidScreenshotTarget(
+                "--identifier requires --app or --pid".to_string(),
+            ));
+        }
+
+        let app_el =
+            app::resolve_app_target(args.element.target.app.as_deref(), args.element.target.pid)?;
+        element::set_timeout(&app_el, 5.0);
+        let el = tree::find_by_identifier(&app_el, identifier).ok_or(AxError::ElementNotFound)?;
+        return resolved_element_screenshot(&el, format!("identifier:{}", identifier));
+    }
+
+    if let Some(path) = &args.path {
+        if args.element.focused || args.element.point.is_some() {
+            return Err(AxError::InvalidScreenshotTarget(
+                "--path cannot be combined with --focused or --point".to_string(),
+            ));
+        }
+        if !has_app_scope {
+            return Err(AxError::InvalidScreenshotTarget(
+                "--path requires --app or --pid".to_string(),
+            ));
+        }
+
+        let app_el =
+            app::resolve_app_target(args.element.target.app.as_deref(), args.element.target.pid)?;
+        element::set_timeout(&app_el, 5.0);
+        let el = tree::find_by_path(&app_el, path).ok_or_else(|| {
+            AxError::InvalidScreenshotTarget(format!("tree path not found: {}", path))
+        })?;
+        return resolved_element_screenshot(&el, format!("path:{}", path));
+    }
+
+    if has_live_selector {
+        let el = resolve_element_target_ext(&args.element)?;
+        return resolved_element_screenshot(&el, element_selector_label(args));
+    }
+
+    Err(AxError::InvalidScreenshotTarget(
+        "provide --rect or an element target (--focused, --point, --app/--pid, --identifier, or --path)"
+            .to_string(),
+    ))
+}
+
+fn resolved_element_screenshot(
+    element: &AXUIElement,
+    selector: String,
+) -> error::Result<ResolvedScreenshotTarget> {
+    let frame = element::read_frame(element).ok_or_else(|| {
+        AxError::InvalidScreenshotTarget(
+            "target element has no accessible frame to capture".to_string(),
+        )
+    })?;
+
+    if frame.width <= 0.0 || frame.height <= 0.0 {
+        return Err(AxError::InvalidScreenshotTarget(
+            "target element frame is empty".to_string(),
+        ));
+    }
+
+    Ok(ResolvedScreenshotTarget {
+        kind: "element",
+        selector,
+        rect: CGRect::new(frame.x, frame.y, frame.width, frame.height),
+    })
+}
+
+fn element_selector_label(args: &ScreenshotArgs) -> String {
+    if args.element.focused {
+        "focused".to_string()
+    } else if let Some(point) = &args.element.point {
+        format!("point:{}", point)
+    } else if let Some(app) = &args.element.target.app {
+        format!("app:{}", app)
+    } else if let Some(pid) = args.element.target.pid {
+        format!("pid:{}", pid)
+    } else {
+        "element".to_string()
+    }
 }
 
 // --- Mutation commands ---

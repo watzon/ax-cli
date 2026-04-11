@@ -6,6 +6,9 @@ pub enum AxError {
     #[error("Accessibility permission not granted. Enable it in System Settings > Privacy & Security > Accessibility")]
     AccessibilityNotTrusted,
 
+    #[error("Screen Recording permission not granted. Enable it in System Settings > Privacy & Security > Screen & System Audio Recording")]
+    ScreenCaptureNotTrusted,
+
     #[error("Application not found: {0}")]
     AppNotFound(String),
 
@@ -24,8 +27,14 @@ pub enum AxError {
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
+    #[error("Invalid screenshot target: {0}")]
+    InvalidScreenshotTarget(String),
+
     #[error("Observer error: {0}")]
     ObserverError(String),
+
+    #[error("Screenshot unavailable: {0}")]
+    ScreenshotUnavailable(String),
 
     #[error("AX API error (code {code}): {message}")]
     AXError { code: i32, message: String },

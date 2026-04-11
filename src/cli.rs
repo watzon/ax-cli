@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::output::OutputFormat;
 
@@ -89,6 +89,26 @@ pub enum Commands {
 
     /// Type text into an editable element (replaces AXValue)
     Type(TypeArgs),
+
+    /// Capture a screenshot of a region or element
+    Screenshot(ScreenshotArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum ScreenshotImageFormat {
+    #[default]
+    Png,
+    #[value(alias = "jpg")]
+    Jpeg,
+}
+
+impl ScreenshotImageFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpeg",
+        }
+    }
 }
 
 #[derive(Args)]
@@ -150,6 +170,10 @@ pub struct TreeArgs {
     /// Only show elements visible within the window viewport
     #[arg(long)]
     pub visible: bool,
+
+    /// Show synthetic tree paths that can be reused with --path
+    #[arg(long)]
+    pub show_paths: bool,
 }
 
 #[derive(Args)]
@@ -301,6 +325,36 @@ pub struct TypeArgs {
     pub element: ElementTargetArgs,
 }
 
+#[derive(Args)]
+pub struct ScreenshotArgs {
+    #[command(flatten)]
+    pub element: ElementTargetArgs,
+
+    /// Target an element by AXIdentifier within the target application
+    #[arg(long)]
+    pub identifier: Option<String>,
+
+    /// Target an element by synthetic tree path (for example: 0.2.1)
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Capture an explicit screen rectangle (format: x,y,width,height)
+    #[arg(long)]
+    pub rect: Option<String>,
+
+    /// Encoded image format for saved/base64 output
+    #[arg(long, value_enum, default_value = "png")]
+    pub image_format: ScreenshotImageFormat,
+
+    /// Save the screenshot to a file
+    #[arg(long)]
+    pub out: Option<String>,
+
+    /// Return the screenshot as a base64-encoded image string
+    #[arg(long)]
+    pub base64: bool,
+}
+
 /// Parse "x,y" coordinate string.
 pub fn parse_point(s: &str) -> Result<(f64, f64), String> {
     let parts: Vec<&str> = s.split(',').collect();
@@ -318,9 +372,46 @@ pub fn parse_point(s: &str) -> Result<(f64, f64), String> {
     Ok((x, y))
 }
 
+/// Parse "x,y,width,height" rectangle string.
+pub fn parse_rect(s: &str) -> Result<(f64, f64, f64, f64), String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "Invalid rect format '{}', expected 'x,y,width,height'",
+            s
+        ));
+    }
+
+    let x = parts[0]
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid x coordinate: '{}'", parts[0]))?;
+    let y = parts[1]
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid y coordinate: '{}'", parts[1]))?;
+    let width = parts[2]
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid width: '{}'", parts[2]))?;
+    let height = parts[3]
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid height: '{}'", parts[3]))?;
+
+    if width <= 0.0 {
+        return Err(format!("Width must be greater than zero: {}", width));
+    }
+    if height <= 0.0 {
+        return Err(format!("Height must be greater than zero: {}", height));
+    }
+
+    Ok((x, y, width, height))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_point;
+    use super::{parse_point, parse_rect};
 
     #[test]
     fn parse_point_accepts_valid_coordinates() {
@@ -331,5 +422,17 @@ mod tests {
     fn parse_point_rejects_invalid_coordinates() {
         assert!(parse_point("12").is_err());
         assert!(parse_point("12,nope").is_err());
+    }
+
+    #[test]
+    fn parse_rect_accepts_valid_coordinates() {
+        assert_eq!(parse_rect("12.5,7,80,25").unwrap(), (12.5, 7.0, 80.0, 25.0));
+    }
+
+    #[test]
+    fn parse_rect_rejects_invalid_coordinates() {
+        assert!(parse_rect("12").is_err());
+        assert!(parse_rect("12,7,0,25").is_err());
+        assert!(parse_rect("12,7,80,nope").is_err());
     }
 }

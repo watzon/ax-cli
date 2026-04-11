@@ -14,9 +14,9 @@ description: >
 
 # ax — macOS Accessibility Inspector CLI
 
-`ax` lets you inspect and interact with any running macOS application's UI from the terminal. It reads element hierarchies, attributes, text content, parameterized values, and can perform actions like clicking buttons, all via the macOS Accessibility framework.
+`ax` lets you inspect and interact with any running macOS application's UI from the terminal. It reads element hierarchies, attributes, text content, parameterized values, can perform actions like clicking buttons, and can capture screenshots of screen regions or resolved elements.
 
-The terminal running `ax` must have Accessibility permission (System Settings > Privacy & Security > Accessibility) for all live-element commands. `ax list` and `ax discover` do not require that permission. If a live query fails with a permission error, tell the user to add their terminal app there and restart it.
+The terminal running `ax` must have Accessibility permission (System Settings > Privacy & Security > Accessibility) for live-element commands. `ax list` and `ax discover` do not require that permission. `ax screenshot` also requires Screen Recording permission (System Settings > Privacy & Security > Screen & System Audio Recording). If a live query or screenshot fails with a permission error, tell the user to add their terminal app there and restart it if macOS prompts for that.
 
 ## Quick Reference
 
@@ -39,6 +39,10 @@ The terminal running `ax` must have Accessibility permission (System Settings > 
 | Focus an element                 | `ax focus --app "App Name" --focused`          |
 | Set an attribute value           | `ax set AXValue "text" --app "App Name" --focused` |
 | Type text into an input          | `ax type "hello" --app "App Name" --focused`   |
+| Capture a region screenshot      | `ax screenshot --rect 100,200,400,300 --out shot.png` |
+| Capture a focused element        | `ax screenshot --app "App Name" --focused --out shot.png` |
+| Capture by tree path             | `ax screenshot --app "App Name" --path 0.2.1 --out shot.png` |
+| Capture as JPEG                  | `ax screenshot --rect 100,200,400,300 --image-format jpeg --out shot.jpg` |
 | Watch for UI changes             | `ax watch --app "App Name"`                    |
 | Explore AX symbol names          | `ax discover attributes --search title`        |
 | Get machine-readable output      | Add `--json` to any command                    |
@@ -52,6 +56,7 @@ The typical workflow for locating a specific piece of information in an app:
 3. **See what's visible** — `ax tree --app "App Name" --visible` to focus on what's currently on screen
 4. **Search with grep** — `ax tree --app "App Name" --depth 20 --no-color | grep -i "search term"` is very effective
 5. **Inspect specifics** — once you find the area, use `ax inspect`, `ax attrs`, `ax get`, or `ax pget` depending on how much data you need
+6. **Capture exact elements** — rerun `ax tree` with `--show-paths` or use `AXIdentifier`, then call `ax screenshot --path ...` or `ax screenshot --identifier ...`
 
 When you need to know Apple's AX symbol names before querying a live element, start with `ax discover`.
 
@@ -69,6 +74,13 @@ Most commands accept these flags to target a specific element:
 - `--point <x,y>` — target the element at screen coordinates
 
 Without `--focused` or `--point`, commands operate on the application element itself.
+
+`ax screenshot` also accepts these selectors:
+
+- `--identifier <AXIdentifier>` — find the first matching identifier inside the targeted app
+- `--path <0.2.1>` — follow a synthetic tree path discovered with `ax tree --show-paths`
+- `--rect <x,y,width,height>` — capture an explicit screen rectangle instead of resolving an element
+- `--image-format <png|jpeg>` — choose the encoded output format for `--out` and `--base64`
 
 ## Commands
 
@@ -110,6 +122,7 @@ ax tree --app Finder --depth 5
 ax tree --app Safari --depth 15 --filter button
 ax tree --app Safari --extras              # include frame + URL data
 ax tree --app Safari --visible             # only viewport-visible elements
+ax tree --app Safari --show-paths          # synthetic paths for screenshot targeting
 ax tree --app Safari --visible --filter link  # visible links with URLs
 ax tree --pid 1234 --json
 ```
@@ -118,6 +131,7 @@ ax tree --pid 1234 --json
 - `--filter ROLE` — keep only branches containing elements whose role matches the substring. `--filter button` shows all AXButton elements and their ancestor containers.
 - `--extras` (`-x`) — include frame data (screen position and size as `@(x,y wxh)`) and URLs (`-> https://...`) for each element. In JSON output, frames are structured as `{"x", "y", "width", "height"}` numeric fields, and URLs appear as a `"url"` string field. Use this to determine element positions and extract links (e.g., `AXURL` on `AXLink` elements).
 - `--visible` — filter the tree to only elements whose frames fall within the window's visible area. Elements scrolled out of view or offscreen are pruned. Implies `--extras`. Useful for determining what the user can currently see.
+- `--show-paths` — include stable-for-this-tree synthetic paths like `0.2.1` on each node. Use these with `ax screenshot --path ...`.
 
 Web content inside browsers is exposed as deeply nested elements. Use `--depth 15` or higher to reach text content in web apps like X/Twitter, Gmail, Slack, etc.
 
@@ -222,7 +236,7 @@ ax element-at 0 0 --json
 
 ### ax set
 
-Sets a writable attribute on an element. Requires `--type` to specify the value type.
+Sets a writable attribute on an element. `--type` is optional and defaults to `string`.
 
 ```
 ax set AXValue "Hello" --app TextEdit --focused
@@ -263,6 +277,27 @@ ax type "search query" --app Safari --focused --json
 ```
 
 Only works on elements with a settable `AXValue` (typically `AXTextField`, `AXTextArea`). Does **not** synthesize keystrokes — replaces the entire field value.
+
+### ax screenshot
+
+Captures either a screen-space rectangle or an accessibility element's frame as a PNG or JPEG. Requires Screen Recording permission, and element-based targeting also requires Accessibility permission.
+
+```
+ax screenshot --rect 100,200,400,300 --out shot.png
+ax screenshot --point 500,300 --base64
+ax screenshot --app Safari --focused --out focused.png
+ax screenshot --app Safari --identifier search-field --out field.png
+ax screenshot --app Safari --path 0.2.1 --out field.png
+ax screenshot --rect 100,200,400,300 --image-format jpeg --out shot.jpg
+ax screenshot --rect 100,200,400,300 --json --base64
+```
+
+- `--out <path>` saves the encoded image to a file
+- `--base64` prints the encoded image as a base64 string
+- `--image-format <png|jpeg>` selects the encoded output format (default: `png`)
+- `--rect` cannot be combined with element selectors
+- `--identifier` and `--path` require `--app` or `--pid`
+- `--identifier` and `--path` cannot be combined with `--focused` or `--point`
 
 ### ax watch
 

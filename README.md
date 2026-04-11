@@ -1,12 +1,13 @@
 # ax
 
-A terminal-first macOS Accessibility Inspector. Use it to inspect running applications, traverse UI hierarchies, query attributes, read parameterized values, perform actions, and monitor accessibility events.
+A terminal-first macOS Accessibility Inspector. Use it to inspect running applications, traverse UI hierarchies, query attributes, read parameterized values, perform actions, monitor accessibility events, and capture screenshots of regions or resolved accessibility elements.
 
 ## Requirements
 
 - macOS (uses the Accessibility framework)
 - Rust 1.70+
-- **Accessibility permission** must be granted to your terminal app
+- **Accessibility permission** must be granted to your terminal app for live AX queries
+- **Screen Recording permission** must be granted to your terminal app for `ax screenshot`
 
 ### Granting Accessibility Permission
 
@@ -16,6 +17,13 @@ A terminal-first macOS Accessibility Inspector. Use it to inspect running applic
 4. Restart your terminal
 
 Without this permission, commands that query UI elements will fail with a clear error message. `ax list` and `ax discover` work without permission because they do not query live accessibility elements.
+
+### Granting Screen Recording Permission
+
+1. Open **System Settings > Privacy & Security > Screen & System Audio Recording**
+2. Add your terminal application if it is not already listed
+3. Enable access for that terminal application
+4. Restart the terminal if macOS prompts you to do so
 
 ## Installation
 
@@ -72,6 +80,7 @@ Once installed, agents can use `ax` to inspect application UI trees, query attri
 | `ax click` | Click an element (AXPress) |
 | `ax focus` | Focus an element |
 | `ax type` | Type text into an editable element |
+| `ax screenshot` | Capture a screenshot of a region or element |
 
 ### List running applications
 
@@ -135,6 +144,7 @@ ax tree --app Finder --depth 3
 ax tree --app Safari --filter button
 ax tree --app Safari --extras          # include frame (position/size) and URLs
 ax tree --app Safari --visible         # only elements visible in the window viewport
+ax tree --app Safari --show-paths      # include synthetic paths for later targeting
 ax tree --pid 1234 --json
 ```
 
@@ -155,6 +165,35 @@ ax tree --pid 1234 --json
 - `--filter` keeps only branches containing elements whose role matches the filter, so `--filter button` shows all buttons and their ancestor containers.
 - `--extras` (`-x`) adds frame data (screen position and size) and URLs (e.g., `AXURL` on link elements) to each node. In JSON mode, frames are structured as `{"x", "y", "width", "height"}` numeric fields.
 - `--visible` filters the tree to only elements whose frames fall within the window's viewport, hiding offscreen/scrolled-away content. Implies `--extras`.
+- `--show-paths` prefixes each node with a synthetic path like `0.2.1`, which can be fed back into `ax screenshot --path ...`.
+
+### Capture a screenshot
+
+Use `screenshot` to capture either an explicit screen rectangle or an accessibility element resolved by app target, focus, point, identifier, or synthetic tree path.
+
+```bash
+ax screenshot --rect 100,200,400,300 --out shot.png
+ax screenshot --point 500,300 --base64
+ax screenshot --app Safari --focused --out focused.png
+ax screenshot --app Safari --identifier search-field --out field.png
+ax screenshot --app Safari --path 0.2.1 --out field.png
+ax screenshot --rect 100,200,400,300 --image-format jpeg --out shot.jpg
+ax screenshot --rect 100,200,400,300 --json --base64
+```
+
+- `--rect <x,y,width,height>` captures an explicit screen-space rectangle.
+- Element targeting reuses `--app`, `--pid`, `--focused`, and `--point`.
+- `--identifier <AXIdentifier>` finds the first matching element inside the targeted app.
+- `--path <tree-path>` targets an element discovered earlier via `ax tree --show-paths`.
+- `--image-format <png|jpeg>` selects the encoded output format. Defaults to `png`.
+- At least one output is required: `--out <path>` and/or `--base64`.
+- `--base64` returns the encoded bytes for the selected image format.
+
+Selector rules:
+
+- `--rect` cannot be combined with element selectors.
+- `--identifier` and `--path` require `--app` or `--pid`.
+- `--identifier` and `--path` cannot be combined with `--focused` or `--point`.
 
 ### List all attributes
 
@@ -214,7 +253,7 @@ Common actions: `AXPress`, `AXShowMenu`, `AXConfirm`, `AXCancel`, `AXIncrement`,
 
 ### Set an attribute value
 
-Use `set` to write a value to a settable attribute. Requires an explicit `--type` flag.
+Use `set` to write a value to a settable attribute. `--type` is optional and defaults to `string`.
 
 ```bash
 ax set AXValue "Hello" --app TextEdit --focused
@@ -292,6 +331,15 @@ Most commands accept these targeting flags:
 | `--pid <pid>` | Target app by process ID |
 | `--focused` | Target the focused element within the app |
 | `--point <x,y>` | Target the element at screen coordinates |
+
+Screenshot-specific selectors:
+
+| Flag | Description |
+|------|-------------|
+| `--identifier <AXIdentifier>` | Target the first matching identifier inside the app |
+| `--path <0.2.1>` | Target an element by synthetic tree path |
+| `--rect <x,y,width,height>` | Capture an explicit screen rectangle |
+| `--image-format <png|jpeg>` | Encode the screenshot as PNG or JPEG |
 
 Commands that do not target live elements:
 - `ax list`
