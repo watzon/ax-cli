@@ -2,12 +2,12 @@ use accessibility::AXUIElement;
 use core_foundation::array::CFArray;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ax::attributes::read_attr_display;
 use crate::ax::element::{self, Frame};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -159,6 +159,15 @@ pub fn find_by_identifier(root: &AXUIElement, identifier: &str) -> Option<AXUIEl
     None
 }
 
+pub fn child_elements(element: &AXUIElement) -> Vec<AXUIElement> {
+    let role = read_attr_display(element, "AXRole").unwrap_or_default();
+    get_children_with_fallback(element, &role)
+}
+
+pub fn find_path_to_element(root: &AXUIElement, target: &AXUIElement) -> Option<String> {
+    find_path_recursive(root, target, "0")
+}
+
 fn empty_node() -> TreeNode {
     TreeNode {
         path: None,
@@ -236,6 +245,25 @@ fn matches_role_filter(role: &str, filter: &str) -> bool {
     let role_lower = role.to_lowercase();
     let filter_lower = filter.to_lowercase();
     role_lower.contains(&filter_lower)
+}
+
+fn find_path_recursive(current: &AXUIElement, target: &AXUIElement, path: &str) -> Option<String> {
+    if element::same_element(current, target) {
+        return Some(path.to_string());
+    }
+
+    let role = read_attr_display(current, "AXRole").unwrap_or_default();
+    for (index, child) in get_children_with_fallback(current, &role)
+        .into_iter()
+        .enumerate()
+    {
+        let child_path = format!("{}.{}", path, index);
+        if let Some(found) = find_path_recursive(&child, target, &child_path) {
+            return Some(found);
+        }
+    }
+
+    None
 }
 
 /// Get children of an element, falling back to AXWindows for application elements.

@@ -36,6 +36,9 @@ pub enum AxError {
     #[error("Screenshot unavailable: {0}")]
     ScreenshotUnavailable(String),
 
+    #[error("Timed out: {0}")]
+    Timeout(String),
+
     #[error("AX API error (code {code}): {message}")]
     AXError { code: i32, message: String },
 }

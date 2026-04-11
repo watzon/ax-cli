@@ -1,6 +1,6 @@
 # ax
 
-A terminal-first macOS Accessibility Inspector. Use it to inspect running applications, traverse UI hierarchies, query attributes, read parameterized values, perform actions, monitor accessibility events, and capture screenshots of regions or resolved accessibility elements.
+A terminal-first macOS Accessibility Inspector. Use it to inspect running applications, traverse UI hierarchies, search live trees, resolve reusable selectors, wait on UI state changes, capture snapshots and diffs, query attributes, perform actions, monitor accessibility events, and capture screenshots of regions or resolved accessibility elements.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ cargo install --path .
 
 ## Agent Skill
 
-An agent skill is available at `./skills/ax-cli` that teaches AI agents how to use `ax` effectively for UI inspection tasks. This skill works with any agent framework that supports the skills format.
+An agent skill is available at `./skills/ax-cli` that teaches AI agents how to use `ax` effectively for UI inspection and automation tasks. This skill works with any agent framework that supports the skills format.
 
 **Install by copying:**
 ```bash
@@ -56,7 +56,7 @@ cp -r skills/ax-cli ~/.claude/skills/
 npx skills install https://github.com/watzon/ax-cli --skill ax-cli
 ```
 
-Once installed, agents can use `ax` to inspect application UI trees, query attributes, discover the AX API surface, and assist with accessibility-related development tasks.
+Once installed, agents can use `ax` to inspect application UI trees, search for elements, query attributes, perform actions, wait for UI state changes, capture and compare snapshots, and automate macOS app interactions.
 
 ## Usage
 
@@ -67,6 +67,11 @@ Once installed, agents can use `ax` to inspect application UI trees, query attri
 | `ax list` | List running applications |
 | `ax inspect` | Show summary info, all attributes, and actions for one element |
 | `ax tree` | Traverse an application's accessibility tree |
+| `ax find` | Search a live accessibility tree |
+| `ax children` | Show the immediate children of an element |
+| `ax windows` | List windows for an application |
+| `ax resolve` | Resolve an element to reusable selectors |
+| `ax wait` | Wait for an element or attribute condition |
 | `ax attrs` | List all attributes and values on one element |
 | `ax action` | Perform an accessibility action |
 | `ax watch` | Stream accessibility notifications |
@@ -80,12 +85,20 @@ Once installed, agents can use `ax` to inspect application UI trees, query attri
 | `ax click` | Click an element (AXPress) |
 | `ax focus` | Focus an element |
 | `ax type` | Type text into an editable element |
+| `ax snapshot` | Capture a structured accessibility snapshot |
+| `ax diff` | Compare two snapshots or a snapshot against the live UI |
 | `ax screenshot` | Capture a screenshot of a region or element |
 
 ### List running applications
 
 ```bash
 ax list
+ax list --long                    # add visible, hidden, focused columns
+ax list --sort name               # sort by name, pid, bundle, visible, or focused
+ax list --filter safari            # substring filter on name or bundle ID
+ax list --visible                  # only apps with visible windows
+ax list --name Finder              # exact name match
+ax list --bundle com.apple.finder  # exact bundle ID match
 ax list --json
 ```
 
@@ -95,6 +108,8 @@ Calculator          1234  com.apple.calculator
 Finder              1979  com.apple.finder
 Safari             12345  com.apple.Safari
 ```
+
+Additional flags: `--long` (`-l`), `--no-header`, `--sort <field>`, `--reverse`, `--filter <text>`, `--name <name>`, `--bundle <id>`, `--visible`/`--hidden`, `--focused`/`--not-focused`.
 
 ### Explore the AX catalog
 
@@ -111,12 +126,14 @@ Valid categories: `attributes`, `parameterized-attributes` (`pattrs`), `actions`
 
 ### Inspect an element
 
-Inspect the application element itself, or target a specific element with `--focused` or `--point`:
+Inspect the application element itself, or target a specific element with `--focused`, `--point`, `--identifier`, or `--path`:
 
 ```bash
 ax inspect --app Finder
 ax inspect --app Safari --focused
 ax inspect --point 500,300
+ax inspect --app Safari --identifier search-field
+ax inspect --app Safari --path 0.2.1
 ax inspect --app Finder --json
 ```
 
@@ -165,7 +182,57 @@ ax tree --pid 1234 --json
 - `--filter` keeps only branches containing elements whose role matches the filter, so `--filter button` shows all buttons and their ancestor containers.
 - `--extras` (`-x`) adds frame data (screen position and size) and URLs (e.g., `AXURL` on link elements) to each node. In JSON mode, frames are structured as `{"x", "y", "width", "height"}` numeric fields.
 - `--visible` filters the tree to only elements whose frames fall within the window's viewport, hiding offscreen/scrolled-away content. Implies `--extras`.
-- `--show-paths` prefixes each node with a synthetic path like `0.2.1`, which can be fed back into `ax screenshot --path ...`.
+- `--show-paths` prefixes each node with a synthetic path like `0.2.1`, which can be fed back into commands like `ax inspect --path ...`, `ax resolve --path ...`, or `ax screenshot --path ...`.
+
+### Find matching elements
+
+Use `find` when you know something about the element you want, but not where it lives in the tree.
+
+```bash
+ax find --app Safari --role button --title Back
+ax find --app Safari --identifier search-field
+ax find --app Safari --within-path 0.2 --text address --limit 5
+ax find --app Safari --visible --show-paths --json
+```
+
+`find` supports substring matching across `--role`, `--subrole`, `--title`, `--value`, `--description`, `--identifier`, `--text`, and `--url`.
+
+### Show immediate children
+
+```bash
+ax children --app Finder
+ax children --app Safari --focused --show-paths
+ax children --app Safari --identifier search-field --json
+```
+
+### List windows
+
+```bash
+ax windows --app Finder
+ax windows --app Safari --show-paths --json
+```
+
+### Resolve reusable selectors
+
+Use `resolve` to turn a live element into a reusable `--identifier` or `--path` selector.
+
+```bash
+ax resolve --app Safari --focused
+ax resolve --app Safari --identifier search-field
+ax resolve --point 500,300 --json
+```
+
+### Wait for UI state
+
+Use `wait` for polling-based automation and scripting.
+
+```bash
+ax wait --app Safari --identifier search-field
+ax wait --app Xcode --identifier build-spinner --for gone --timeout 30
+ax wait --app Notes --focused --for attribute --attribute AXValue --equals Saved
+```
+
+Supported wait conditions: `exists`, `gone`, `focused`, and `attribute`.
 
 ### Capture a screenshot
 
@@ -182,9 +249,7 @@ ax screenshot --rect 100,200,400,300 --json --base64
 ```
 
 - `--rect <x,y,width,height>` captures an explicit screen-space rectangle.
-- Element targeting reuses `--app`, `--pid`, `--focused`, and `--point`.
-- `--identifier <AXIdentifier>` finds the first matching element inside the targeted app.
-- `--path <tree-path>` targets an element discovered earlier via `ax tree --show-paths`.
+- Element targeting reuses the common selector flags described below.
 - `--image-format <png|jpeg>` selects the encoded output format. Defaults to `png`.
 - At least one output is required: `--out <path>` and/or `--base64`.
 - `--base64` returns the encoded bytes for the selected image format.
@@ -295,6 +360,19 @@ ax type "search query" --app Safari --focused --json
 
 This only works on elements with a settable `AXValue` attribute (typically `AXTextField` and `AXTextArea` roles). It does **not** synthesize keystrokes — it replaces the entire value.
 
+### Capture snapshots and diffs
+
+Use `snapshot` to save a structured JSON capture of a live element or app subtree, then use `diff` to compare two snapshots or compare a snapshot against the live UI.
+
+```bash
+ax snapshot --app Safari --depth 4 --visible --out safari.json
+ax snapshot --app Finder --focused --json
+
+ax diff safari.json --current safari-after.json
+ax diff safari.json --app Safari --visible
+ax diff field.json --app Safari --identifier search-field --json
+```
+
 ### Watch for notifications
 
 ```bash
@@ -331,13 +409,15 @@ Most commands accept these targeting flags:
 | `--pid <pid>` | Target app by process ID |
 | `--focused` | Target the focused element within the app |
 | `--point <x,y>` | Target the element at screen coordinates |
+| `--identifier <AXIdentifier>` | Target the first matching identifier inside the app |
+| `--path <0.2.1>` | Target an element by synthetic tree path |
 
-Screenshot-specific selectors:
+`ax find` uses `--within-identifier` and `--within-path` for the search root so `--identifier` can remain available as a search filter.
+
+Screenshot-specific flags:
 
 | Flag | Description |
 |------|-------------|
-| `--identifier <AXIdentifier>` | Target the first matching identifier inside the app |
-| `--path <0.2.1>` | Target an element by synthetic tree path |
 | `--rect <x,y,width,height>` | Capture an explicit screen rectangle |
 | `--image-format <png|jpeg>` | Encode the screenshot as PNG or JPEG |
 

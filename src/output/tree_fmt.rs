@@ -129,3 +129,7 @@ fn format_node_line(node: &TreeNode, use_color: bool) -> String {
 
     line
 }
+
+pub fn format_node_summary(node: &TreeNode, use_color: bool) -> String {
+    format_node_line(node, use_color)
+}

@@ -6,19 +6,19 @@ use accessibility_sys::{
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::string::CFString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ax::element::cftype_to_string;
 use crate::error::{AxError, Result};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttributeInfo {
     pub name: String,
     pub value: String,
     pub settable: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementInfo {
     pub role: String,
     pub subrole: Option<String>,

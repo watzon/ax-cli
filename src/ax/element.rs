@@ -5,12 +5,12 @@ use accessibility_sys::{
     AXUIElementGetPid, AXUIElementSetMessagingTimeout, AXValueGetType, AXValueGetValue,
 };
 use core_foundation::array::CFArray;
-use core_foundation::base::{CFGetTypeID, CFType, CFTypeRef, TCFType};
+use core_foundation::base::{CFEqual, CFGetTypeID, CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use core_foundation::url::CFURL;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 
@@ -234,7 +234,7 @@ pub fn set_timeout(element: &AXUIElement, timeout_secs: f32) {
 }
 
 /// A screen-coordinate frame (position + size) for an accessibility element.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Frame {
     pub x: f64,
     pub y: f64,
@@ -262,6 +262,11 @@ pub fn read_frame(element: &AXUIElement) -> Option<Frame> {
         width: size.width,
         height: size.height,
     })
+}
+
+/// Compare two AXUIElements for identity.
+pub fn same_element(left: &AXUIElement, right: &AXUIElement) -> bool {
+    unsafe { CFEqual(left.as_CFTypeRef(), right.as_CFTypeRef()) != 0 }
 }
 
 fn read_axvalue_point(element: &AXUIElement, attr: &str) -> Option<CGPoint> {
