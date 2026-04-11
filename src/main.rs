@@ -11,6 +11,7 @@ use base64::Engine;
 use clap::Parser;
 use core_foundation::base::TCFType;
 use screencapturekit::cg::CGRect;
+use std::cmp::Ordering;
 use std::process;
 
 use crate::ax::{
@@ -51,7 +52,7 @@ fn main() {
     }
 
     let result = match cli.command {
-        Commands::List => cmd_list(&cli),
+        Commands::List(ref args) => cmd_list(&cli, args),
         Commands::Inspect(ref args) => cmd_inspect(&cli, args),
         Commands::Tree(ref args) => cmd_tree(&cli, args),
         Commands::Attrs(ref args) => cmd_attrs(&cli, args),
@@ -87,7 +88,7 @@ fn main() {
 
 fn command_needs_accessibility(command: &Commands) -> bool {
     match command {
-        Commands::List | Commands::Discover(..) => false,
+        Commands::List(..) | Commands::Discover(..) => false,
         Commands::Screenshot(args) => args.rect.is_none(),
         _ => true,
     }
@@ -97,15 +98,86 @@ fn command_needs_screen_capture(command: &Commands) -> bool {
     matches!(command, Commands::Screenshot(..))
 }
 
-fn cmd_list(cli: &Cli) -> error::Result<()> {
-    let apps = app::list_running_apps();
+fn cmd_list(cli: &Cli, args: &ListArgs) -> error::Result<()> {
+    let mut apps = filter_list_apps(app::list_running_apps(), args);
+    sort_list_apps(&mut apps, args.sort, args.reverse);
 
     match cli.output_format() {
         OutputFormat::Json => print!("{}", json_fmt::to_json(&apps)),
-        _ => print!("{}", plain_fmt::format_app_list(&apps, cli.use_color())),
+        _ => print!(
+            "{}",
+            plain_fmt::format_app_list(&apps, args.long, args.no_header, cli.use_color())
+        ),
     }
 
     Ok(())
+}
+
+fn filter_list_apps(apps: Vec<app::AppInfo>, args: &ListArgs) -> Vec<app::AppInfo> {
+    let filter = args.filter.as_deref().map(str::to_lowercase);
+    let name = args.name.as_deref().map(str::to_lowercase);
+    let bundle = args.bundle.as_deref().map(str::to_lowercase);
+
+    apps.into_iter()
+        .filter(|app| {
+            matches_list_text_filter(app, filter.as_deref(), name.as_deref(), bundle.as_deref())
+        })
+        .filter(|app| !args.visible || app.visible)
+        .filter(|app| !args.hidden || app.hidden)
+        .filter(|app| !args.focused || app.focused)
+        .filter(|app| !args.not_focused || !app.focused)
+        .collect()
+}
+
+fn matches_list_text_filter(
+    app: &app::AppInfo,
+    filter: Option<&str>,
+    name: Option<&str>,
+    bundle: Option<&str>,
+) -> bool {
+    let app_name = app.name.to_lowercase();
+    let app_bundle = app.bundle_id.to_lowercase();
+
+    filter.map_or(true, |filter| {
+        app_name.contains(filter) || app_bundle.contains(filter)
+    }) && name.map_or(true, |name| app_name.contains(name))
+        && bundle.map_or(true, |bundle| app_bundle.contains(bundle))
+}
+
+fn sort_list_apps(apps: &mut [app::AppInfo], sort: Option<ListSortField>, reverse: bool) {
+    if let Some(sort) = sort {
+        apps.sort_by(|left, right| compare_list_apps(left, right, sort));
+    }
+
+    if reverse {
+        apps.reverse();
+    }
+}
+
+fn compare_list_apps(left: &app::AppInfo, right: &app::AppInfo, sort: ListSortField) -> Ordering {
+    match sort {
+        ListSortField::Name => {
+            cmp_lowercase(&left.name, &right.name).then(left.pid.cmp(&right.pid))
+        }
+        ListSortField::Pid => left
+            .pid
+            .cmp(&right.pid)
+            .then_with(|| cmp_lowercase(&left.name, &right.name)),
+        ListSortField::Bundle => cmp_lowercase(&left.bundle_id, &right.bundle_id)
+            .then_with(|| cmp_lowercase(&left.name, &right.name)),
+        ListSortField::Visible => right
+            .visible
+            .cmp(&left.visible)
+            .then_with(|| cmp_lowercase(&left.name, &right.name)),
+        ListSortField::Focused => right
+            .focused
+            .cmp(&left.focused)
+            .then_with(|| cmp_lowercase(&left.name, &right.name)),
+    }
+}
+
+fn cmp_lowercase(left: &str, right: &str) -> Ordering {
+    left.to_lowercase().cmp(&right.to_lowercase())
 }
 
 fn cmd_inspect(cli: &Cli, args: &InspectArgs) -> error::Result<()> {
@@ -989,4 +1061,106 @@ fn cmd_type(cli: &Cli, args: &TypeArgs) -> error::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compare_list_apps, filter_list_apps, sort_list_apps};
+    use crate::ax::app::AppInfo;
+    use crate::cli::{ListArgs, ListSortField};
+
+    fn app(name: &str, pid: i32, bundle_id: &str, visible: bool, focused: bool) -> AppInfo {
+        AppInfo {
+            pid,
+            name: name.to_string(),
+            bundle_id: bundle_id.to_string(),
+            focused,
+            hidden: !visible,
+            visible,
+        }
+    }
+
+    fn list_args() -> ListArgs {
+        ListArgs {
+            long: false,
+            no_header: false,
+            sort: None,
+            reverse: false,
+            filter: None,
+            name: None,
+            bundle: None,
+            visible: false,
+            hidden: false,
+            focused: false,
+            not_focused: false,
+        }
+    }
+
+    #[test]
+    fn filter_list_apps_applies_text_and_state_filters() {
+        let mut args = list_args();
+        args.filter = Some("apple".to_string());
+        args.visible = true;
+        args.not_focused = true;
+
+        let filtered = filter_list_apps(
+            vec![
+                app("Safari", 100, "com.apple.Safari", true, false),
+                app("Music", 101, "com.apple.Music", true, true),
+                app("Discord", 102, "com.hnc.Discord", false, false),
+            ],
+            &args,
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "Safari");
+    }
+
+    #[test]
+    fn sort_list_apps_sorts_by_requested_field() {
+        let mut apps = vec![
+            app("Safari", 300, "com.apple.Safari", true, false),
+            app("Notes", 100, "com.apple.Notes", true, true),
+            app("Discord", 200, "com.hnc.Discord", false, false),
+        ];
+
+        sort_list_apps(&mut apps, Some(ListSortField::Pid), false);
+
+        assert_eq!(
+            apps.iter().map(|app| app.pid).collect::<Vec<_>>(),
+            vec![100, 200, 300]
+        );
+    }
+
+    #[test]
+    fn sort_list_apps_reverses_default_order_without_explicit_sort() {
+        let mut apps = vec![
+            app("Discord", 200, "com.hnc.Discord", false, false),
+            app("Notes", 100, "com.apple.Notes", true, true),
+            app("Safari", 300, "com.apple.Safari", true, false),
+        ];
+
+        sort_list_apps(&mut apps, None, true);
+
+        assert_eq!(
+            apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>(),
+            vec!["Safari", "Notes", "Discord"]
+        );
+    }
+
+    #[test]
+    fn compare_list_apps_prioritizes_true_boolean_states() {
+        assert!(compare_list_apps(
+            &app("Safari", 100, "com.apple.Safari", true, false),
+            &app("Discord", 101, "com.hnc.Discord", false, false),
+            ListSortField::Visible,
+        )
+        .is_lt());
+        assert!(compare_list_apps(
+            &app("Notes", 100, "com.apple.Notes", true, true),
+            &app("Safari", 101, "com.apple.Safari", true, false),
+            ListSortField::Focused,
+        )
+        .is_lt());
+    }
 }

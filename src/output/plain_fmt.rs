@@ -8,7 +8,7 @@ use crate::ax::observer::NotificationEvent;
 use crate::ax::parameterized;
 
 /// Format app list as a table.
-pub fn format_app_list(apps: &[AppInfo], use_color: bool) -> String {
+pub fn format_app_list(apps: &[AppInfo], long: bool, no_header: bool, use_color: bool) -> String {
     if apps.is_empty() {
         return "No applications found.".to_string();
     }
@@ -16,34 +16,86 @@ pub fn format_app_list(apps: &[AppInfo], use_color: bool) -> String {
     let mut output = String::new();
     let name_width = apps.iter().map(|a| a.name.len()).max().unwrap_or(20).max(4);
     let pid_width = 7;
+    let visible_width = apps
+        .iter()
+        .map(|a| app_state(a.visible).len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
+    let focused_width = apps
+        .iter()
+        .map(|a| app_state(a.focused).len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
 
-    // Header
-    let header = format!(
-        "{:<name_width$}  {:>pid_width$}  {}",
-        "NAME",
-        "PID",
-        "BUNDLE ID",
-        name_width = name_width,
-        pid_width = pid_width,
-    );
-    if use_color {
-        output.push_str(&format!("{}\n", header.bold()));
-    } else {
-        output.push_str(&format!("{}\n", header));
+    if !no_header {
+        let header = if long {
+            format!(
+                "{:<name_width$}  {:>pid_width$}  {:<visible_width$}  {:<focused_width$}  {}",
+                "NAME",
+                "PID",
+                "VISIBLE",
+                "FOCUSED",
+                "BUNDLE ID",
+                name_width = name_width,
+                pid_width = pid_width,
+                visible_width = visible_width,
+                focused_width = focused_width,
+            )
+        } else {
+            format!(
+                "{:<name_width$}  {:>pid_width$}  {}",
+                "NAME",
+                "PID",
+                "BUNDLE ID",
+                name_width = name_width,
+                pid_width = pid_width,
+            )
+        };
+
+        if use_color {
+            output.push_str(&format!("{}\n", header.bold()));
+        } else {
+            output.push_str(&format!("{}\n", header));
+        }
     }
 
     for app in apps {
-        output.push_str(&format!(
-            "{:<name_width$}  {:>pid_width$}  {}\n",
-            app.name,
-            app.pid,
-            app.bundle_id,
-            name_width = name_width,
-            pid_width = pid_width,
-        ));
+        if long {
+            output.push_str(&format!(
+                "{:<name_width$}  {:>pid_width$}  {:<visible_width$}  {:<focused_width$}  {}\n",
+                app.name,
+                app.pid,
+                app_state(app.visible),
+                app_state(app.focused),
+                app.bundle_id,
+                name_width = name_width,
+                pid_width = pid_width,
+                visible_width = visible_width,
+                focused_width = focused_width,
+            ));
+        } else {
+            output.push_str(&format!(
+                "{:<name_width$}  {:>pid_width$}  {}\n",
+                app.name,
+                app.pid,
+                app.bundle_id,
+                name_width = name_width,
+                pid_width = pid_width,
+            ));
+        }
     }
 
     output
+}
+
+fn app_state(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 /// Format element info for inspect output.
@@ -507,4 +559,65 @@ pub fn format_parameterized_attrs(names: &[String], use_color: bool) -> String {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_app_list;
+    use crate::ax::app::AppInfo;
+
+    fn app(name: &str, pid: i32, bundle_id: &str, visible: bool, focused: bool) -> AppInfo {
+        AppInfo {
+            pid,
+            name: name.to_string(),
+            bundle_id: bundle_id.to_string(),
+            focused,
+            hidden: !visible,
+            visible,
+        }
+    }
+
+    #[test]
+    fn format_app_list_renders_default_columns() {
+        let output = format_app_list(
+            &[app("Safari", 123, "com.apple.Safari", true, true)],
+            false,
+            false,
+            false,
+        );
+
+        assert!(output.contains("NAME"));
+        assert!(output.contains("PID"));
+        assert!(output.contains("BUNDLE ID"));
+        assert!(!output.contains("VISIBLE"));
+        assert!(output.contains("Safari"));
+    }
+
+    #[test]
+    fn format_app_list_renders_long_columns() {
+        let output = format_app_list(
+            &[app("Safari", 123, "com.apple.Safari", true, false)],
+            true,
+            false,
+            false,
+        );
+
+        assert!(output.contains("VISIBLE"));
+        assert!(output.contains("FOCUSED"));
+        assert!(output.contains("yes"));
+        assert!(output.contains("no"));
+    }
+
+    #[test]
+    fn format_app_list_can_hide_header() {
+        let output = format_app_list(
+            &[app("Safari", 123, "com.apple.Safari", true, true)],
+            true,
+            true,
+            false,
+        );
+
+        assert!(!output.contains("NAME"));
+        assert!(output.starts_with("Safari"));
+    }
 }

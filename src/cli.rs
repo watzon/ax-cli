@@ -43,7 +43,7 @@ impl Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// List running applications visible to accessibility
-    List,
+    List(ListArgs),
 
     /// Inspect a single element's attributes and actions
     Inspect(InspectArgs),
@@ -109,6 +109,62 @@ impl ScreenshotImageFormat {
             Self::Jpeg => "jpeg",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ListSortField {
+    Name,
+    Pid,
+    Bundle,
+    Visible,
+    Focused,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ListArgs {
+    /// Show additional state columns
+    #[arg(long, short = 'l')]
+    pub long: bool,
+
+    /// Hide the table header row
+    #[arg(long)]
+    pub no_header: bool,
+
+    /// Sort by the selected field
+    #[arg(long, value_enum)]
+    pub sort: Option<ListSortField>,
+
+    /// Reverse the selected sort order
+    #[arg(long)]
+    pub reverse: bool,
+
+    /// Filter by app name or bundle ID (case-insensitive substring match)
+    #[arg(long)]
+    pub filter: Option<String>,
+
+    /// Filter by app name (case-insensitive substring match)
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Filter by bundle ID (case-insensitive substring match)
+    #[arg(long)]
+    pub bundle: Option<String>,
+
+    /// Only show apps with at least one on-screen window frame
+    #[arg(long, conflicts_with = "hidden")]
+    pub visible: bool,
+
+    /// Only show apps hidden by macOS
+    #[arg(long, conflicts_with = "visible")]
+    pub hidden: bool,
+
+    /// Only show the frontmost active app
+    #[arg(long, conflicts_with = "not_focused")]
+    pub focused: bool,
+
+    /// Only show apps that are not frontmost
+    #[arg(long, conflicts_with = "focused")]
+    pub not_focused: bool,
 }
 
 #[derive(Args)]
@@ -411,7 +467,9 @@ pub fn parse_rect(s: &str) -> Result<(f64, f64, f64, f64), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_point, parse_rect};
+    use clap::Parser;
+
+    use super::{parse_point, parse_rect, Cli, Commands, ListSortField};
 
     #[test]
     fn parse_point_accepts_valid_coordinates() {
@@ -434,5 +492,28 @@ mod tests {
         assert!(parse_rect("12").is_err());
         assert!(parse_rect("12,7,0,25").is_err());
         assert!(parse_rect("12,7,80,nope").is_err());
+    }
+
+    #[test]
+    fn list_accepts_sort_and_reverse_flags() {
+        let cli = Cli::try_parse_from(["ax", "list", "--sort", "pid", "--reverse"]).unwrap();
+
+        match cli.command {
+            Commands::List(args) => {
+                assert_eq!(args.sort, Some(ListSortField::Pid));
+                assert!(args.reverse);
+            }
+            _ => panic!("expected list command"),
+        }
+    }
+
+    #[test]
+    fn list_rejects_conflicting_visibility_flags() {
+        assert!(Cli::try_parse_from(["ax", "list", "--visible", "--hidden"]).is_err());
+    }
+
+    #[test]
+    fn list_rejects_conflicting_focus_flags() {
+        assert!(Cli::try_parse_from(["ax", "list", "--focused", "--not-focused"]).is_err());
     }
 }
