@@ -1,6 +1,6 @@
 [package]
 name = "ax"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.70"
 description = "macOS Accessibility Inspector CLI — inspect UI hierarchies, attributes, and actions from the terminal"
