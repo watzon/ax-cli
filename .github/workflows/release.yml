@@ -195,7 +195,7 @@ jobs:
         uses: mislav/bump-homebrew-formula-action@v3
         with:
           formula-name: ax
-          homebrew-tap: watzon/homebrew-ax
+          homebrew-tap: watzon/homebrew-tap
           tag-name: ${{ github.ref_name }}
           download-url: https://github.com/watzon/ax-cli/releases/download/${{ github.ref_name }}/ax-${{ steps.version.outputs.version }}-universal-apple-darwin.tar.gz
         env:
