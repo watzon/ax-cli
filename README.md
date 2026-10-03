@@ -30,8 +30,7 @@ Without this permission, commands that query UI elements will fail with a clear 
 ### Homebrew
 
 ```bash
-brew tap watzon/ax
-brew install ax
+brew install watzon/tap/ax
 ```
 
 ### From source

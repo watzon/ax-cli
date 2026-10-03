@@ -132,4 +132,4 @@ Most commands require **Accessibility** permission for the terminal app. `ax scr
 
 ## Release
 
-Releases are triggered by publishing a GitHub Release. CI builds signed/notarized universal binaries (x86_64 + aarch64 via `lipo`), uploads tarballs + SHA256 checksums, and auto-updates the `watzon/homebrew-ax` tap. Do not manually publish release assets.
+Releases are triggered by publishing a GitHub Release. CI builds signed/notarized universal binaries (x86_64 + aarch64 via `lipo`), uploads tarballs + SHA256 checksums, and auto-updates the `ax` formula in the `watzon/homebrew-tap` tap. Do not manually publish release assets.
